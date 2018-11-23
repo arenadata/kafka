@@ -30,30 +30,30 @@ Building real-time streaming applications that transform or react to the streams
 
 * <strong>Web-based user interface</strong>
 
-*Seamless experience between design, control, feedback, and monitoring
+** Seamless experience between design, control, feedback, and monitoring
 
 * <strong>Highly configurable</strong>
 
-*Loss tolerant vs guaranteed delivery
+** Loss tolerant vs guaranteed delivery
 
-*Dynamic prioritization
+** Dynamic prioritization
 
-*Flow can be modified at runtime
+** Flow can be modified at runtime
 
-*Back pressure
+** Back pressure
 
 * <strong>Data Provenance</strong>
 
-*Track dataflow from beginning to end
+** Track dataflow from beginning to end
 
 * <strong>Designed for extension</strong>
 
-*Build your own processors and more
+** Build your own processors and more
 
-*Enables rapid development and effective testing
+** Enables rapid development and effective testing
 
 * <strong>Secure</strong>
 
-*SSL, SSH, HTTPS, encrypted content, etc...
+** SSL, SSH, HTTPS, encrypted content, etc...
 
-*Multi-tenant authorization and internal authorization/policy management
+** Multi-tenant authorization and internal authorization/policy management

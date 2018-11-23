@@ -1,5 +1,5 @@
 # Arenadata Streaming
-=================
+=====================
 
 See our [web site](https://arenadata.tech/products/ads/) for details on the project.
 

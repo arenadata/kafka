@@ -1,5 +1,6 @@
 # Arenadata Streaming
 =================
+
 See our [web site](https://arenadata.tech/products/ads/) for details on the project.
 
 ## Getting Started
@@ -26,18 +27,33 @@ Building real-time streaming data pipelines that reliably get data between syste
 Building real-time streaming applications that transform or react to the streams of data
 
 ## Features
+
 * <strong>Web-based user interface</strong>
+
 *Seamless experience between design, control, feedback, and monitoring
+
 * <strong>Highly configurable</strong>
+
 *Loss tolerant vs guaranteed delivery
+
 *Dynamic prioritization
+
 *Flow can be modified at runtime
+
 *Back pressure
+
 * <strong>Data Provenance</strong>
+
 *Track dataflow from beginning to end
+
 * <strong>Designed for extension</strong>
+
 *Build your own processors and more
+
 *Enables rapid development and effective testing
+
 * <strong>Secure</strong>
+
 *SSL, SSH, HTTPS, encrypted content, etc...
+
 *Multi-tenant authorization and internal authorization/policy management

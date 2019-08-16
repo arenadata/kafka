@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.streams.kstream.internals;
 
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.errors.ProcessorStateException;
@@ -82,6 +83,7 @@ public class KStreamSessionWindowAggregate<K, V, Agg> implements KStreamAggProce
         private StreamsMetricsImpl metrics;
         private InternalProcessorContext internalProcessorContext;
         private Sensor lateRecordDropSensor;
+        private long observedStreamTime = ConsumerRecord.NO_TIMESTAMP;
 
         @SuppressWarnings("unchecked")
         @Override
@@ -108,7 +110,8 @@ public class KStreamSessionWindowAggregate<K, V, Agg> implements KStreamAggProce
                 return;
             }
 
-            final long closeTime = internalProcessorContext.streamTime() - windows.gracePeriodMs();
+            observedStreamTime = Math.max(observedStreamTime, context().timestamp());
+            final long closeTime = observedStreamTime - windows.gracePeriodMs();
 
             final long timestamp = context().timestamp();
             final List<KeyValue<Windowed<K>, Agg>> merged = new ArrayList<>();
@@ -131,7 +134,29 @@ public class KStreamSessionWindowAggregate<K, V, Agg> implements KStreamAggProce
                 }
             }
 
-            if (mergedWindow.end() > closeTime) {
+            if (mergedWindow.end() < closeTime) {
+                LOG.debug(
+                    "Skipping record for expired window. " +
+                        "key=[{}] " +
+                        "topic=[{}] " +
+                        "partition=[{}] " +
+                        "offset=[{}] " +
+                        "timestamp=[{}] " +
+                        "window=[{},{}] " +
+                        "expiration=[{}] " +
+                        "streamTime=[{}]",
+                    key,
+                    context().topic(),
+                    context().partition(),
+                    context().offset(),
+                    context().timestamp(),
+                    mergedWindow.start(),
+                    mergedWindow.end(),
+                    closeTime,
+                    observedStreamTime
+                );
+                lateRecordDropSensor.record();
+            } else {
                 if (!mergedWindow.equals(newSessionWindow)) {
                     for (final KeyValue<Windowed<K>, Agg> session : merged) {
                         store.remove(session.key);
@@ -143,12 +168,6 @@ public class KStreamSessionWindowAggregate<K, V, Agg> implements KStreamAggProce
                 final Windowed<K> sessionKey = new Windowed<>(key, mergedWindow);
                 store.put(sessionKey, agg);
                 tupleForwarder.maybeForward(sessionKey, agg, null);
-            } else {
-                LOG.debug(
-                    "Skipping record for expired window. key=[{}] topic=[{}] partition=[{}] offset=[{}] timestamp=[{}] window=[{},{}) expiration=[{}]",
-                    key, context().topic(), context().partition(), context().offset(), context().timestamp(), mergedWindow.start(), mergedWindow.end(), closeTime
-                );
-                lateRecordDropSensor.record();
             }
         }
 

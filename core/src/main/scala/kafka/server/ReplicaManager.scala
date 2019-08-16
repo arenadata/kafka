@@ -124,6 +124,7 @@ object ReplicaManager {
   val OfflinePartition: Partition = new Partition(new TopicPartition("", -1),
     isOffline = true,
     replicaLagTimeMaxMs = 0L,
+    interBrokerProtocolVersion = ApiVersion.latestVersion,
     localBrokerId = -1,
     time = null,
     replicaManager = null,
@@ -400,9 +401,13 @@ class ReplicaManager(val config: KafkaConfig,
   def nonOfflinePartition(topicPartition: TopicPartition): Option[Partition] =
     getPartition(topicPartition).filter(_ ne ReplicaManager.OfflinePartition)
 
+  // An iterator over all non offline partitions. This is a weakly consistent iterator; a partition made offline after
+  // the iterator has been constructed could still be returned by this iterator.
   private def nonOfflinePartitionsIterator: Iterator[Partition] =
     allPartitions.values.iterator.filter(_ ne ReplicaManager.OfflinePartition)
 
+  // An iterator over all offline partitions. This is a weakly consistent iterator; a partition made offline after the
+  // iterator has been constructed may not be visible.
   private def offlinePartitionsIterator: Iterator[Partition] =
     allPartitions.values.iterator.filter(_ eq ReplicaManager.OfflinePartition)
 
@@ -558,6 +563,11 @@ class ReplicaManager(val config: KafkaConfig,
     replicaStateChangeLock synchronized {
       partitionDirs.map { case (topicPartition, destinationDir) =>
         try {
+          /* If the topic name is exceptionally long, we can't support altering the log directory.
+           * See KAFKA-4893 for details.
+           * TODO: fix this by implementing topic IDs. */
+          if (Log.logFutureDirName(topicPartition).size > 255)
+            throw new InvalidTopicException("The topic name is too long.")
           if (!logManager.isLogDirOnline(destinationDir))
             throw new KafkaStorageException(s"Log directory $destinationDir is offline")
 
@@ -598,7 +608,8 @@ class ReplicaManager(val config: KafkaConfig,
 
           (topicPartition, Errors.NONE)
         } catch {
-          case e@(_: LogDirNotFoundException |
+          case e@(_: InvalidTopicException |
+                  _: LogDirNotFoundException |
                   _: ReplicaNotAvailableException |
                   _: KafkaStorageException) =>
             (topicPartition, Errors.forException(e))
@@ -885,13 +896,13 @@ class ReplicaManager(val config: KafkaConfig,
       brokerTopicStats.topicStats(tp.topic).totalFetchRequestRate.mark()
       brokerTopicStats.allTopicsStats.totalFetchRequestRate.mark()
 
+      val adjustedMaxBytes = math.min(fetchInfo.maxBytes, limitBytes)
       try {
         trace(s"Fetching log segment for partition $tp, offset $offset, partition fetch size $partitionFetchSize, " +
           s"remaining response limit $limitBytes" +
           (if (minOneMessage) s", ignoring response/partition size limits" else ""))
 
         val partition = getPartitionOrException(tp, expectLeader = fetchOnlyFromLeader)
-        val adjustedMaxBytes = math.min(fetchInfo.maxBytes, limitBytes)
         val fetchTimeMs = time.milliseconds
 
         // Try the read first, this tells us whether we need all of adjustedFetchSize for this partition
@@ -945,7 +956,11 @@ class ReplicaManager(val config: KafkaConfig,
         case e: Throwable =>
           brokerTopicStats.topicStats(tp.topic).failedFetchRequestRate.mark()
           brokerTopicStats.allTopicsStats.failedFetchRequestRate.mark()
-          error(s"Error processing fetch operation on partition $tp, offset $offset", e)
+
+          val fetchSource = Request.describeReplicaId(replicaId)
+          error(s"Error processing fetch with max size $adjustedMaxBytes from $fetchSource " +
+            s"on partition $tp: $fetchInfo", e)
+
           LogReadResult(info = FetchDataInfo(LogOffsetMetadata.UnknownOffsetMetadata, MemoryRecords.EMPTY),
                         highWatermark = -1L,
                         leaderLogStartOffset = -1L,
@@ -1335,7 +1350,11 @@ class ReplicaManager(val config: KafkaConfig,
 
   private def maybeShrinkIsr(): Unit = {
     trace("Evaluating ISR list of partitions to see which replicas can be removed from the ISR")
-    nonOfflinePartitionsIterator.foreach(_.maybeShrinkIsr(config.replicaLagTimeMaxMs))
+
+    // Shrink ISRs for non offline partitions
+    allPartitions.keys.foreach { topicPartition =>
+      nonOfflinePartition(topicPartition).foreach(_.maybeShrinkIsr(config.replicaLagTimeMaxMs))
+    }
   }
 
   /**

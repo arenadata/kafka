@@ -25,6 +25,7 @@ import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.errors.ProducerFencedException;
+import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.metrics.stats.Count;
@@ -236,14 +237,13 @@ public class StreamTask extends AbstractTask implements ProcessorNodePunctuator 
 
         recordInfo = new PartitionGroup.RecordInfo();
         partitionGroup = new PartitionGroup(partitionQueues, recordLatenessSensor(processorContextImpl));
-        processorContextImpl.setStreamTimeSupplier(partitionGroup::timestamp);
 
         stateMgr.registerGlobalStateStores(topology.globalStateStores());
 
         // initialize transactions if eos is turned on, which will block if the previous transaction has not
         // completed yet; do not start the first transaction until the topology has been initialized later
         if (eosEnabled) {
-            this.producer.initTransactions();
+            initializeTransactions();
         }
     }
 
@@ -280,6 +280,8 @@ public class StreamTask extends AbstractTask implements ProcessorNodePunctuator 
         taskInitialized = true;
 
         idleStartTime = RecordQueue.UNKNOWN;
+
+        stateMgr.ensureStoresRegistered();
     }
 
     /**
@@ -295,7 +297,7 @@ public class StreamTask extends AbstractTask implements ProcessorNodePunctuator 
                 throw new IllegalStateException("Task producer should be null.");
             }
             producer = producerSupplier.get();
-            producer.initTransactions();
+            initializeTransactions();
             recordCollector.init(producer);
         }
     }
@@ -602,7 +604,9 @@ public class StreamTask extends AbstractTask implements ProcessorNodePunctuator 
 
                 // can be ignored: transaction got already aborted by brokers/transactional-coordinator if this happens
             }
+        }
 
+        if (eosEnabled) {
             try {
                 recordCollector.close();
             } catch (final Throwable e) {
@@ -784,14 +788,14 @@ public class StreamTask extends AbstractTask implements ProcessorNodePunctuator 
      * @throws TaskMigratedException if the task producer got fenced (EOS only)
      */
     public boolean maybePunctuateStreamTime() {
-        final long timestamp = partitionGroup.timestamp();
+        final long streamTime = partitionGroup.streamTime();
 
         // if the timestamp is not known yet, meaning there is not enough data accumulated
         // to reason stream partition time, then skip.
-        if (timestamp == RecordQueue.UNKNOWN) {
+        if (streamTime == RecordQueue.UNKNOWN) {
             return false;
         } else {
-            final boolean punctuated = streamTimePunctuationQueue.mayPunctuate(timestamp, PunctuationType.STREAM_TIME, this);
+            final boolean punctuated = streamTimePunctuationQueue.mayPunctuate(streamTime, PunctuationType.STREAM_TIME, this);
 
             if (punctuated) {
                 commitNeeded = true;
@@ -809,9 +813,9 @@ public class StreamTask extends AbstractTask implements ProcessorNodePunctuator 
      * @throws TaskMigratedException if the task producer got fenced (EOS only)
      */
     public boolean maybePunctuateSystemTime() {
-        final long timestamp = time.milliseconds();
+        final long systemTime = time.milliseconds();
 
-        final boolean punctuated = systemTimePunctuationQueue.mayPunctuate(timestamp, PunctuationType.WALL_CLOCK_TIME, this);
+        final boolean punctuated = systemTimePunctuationQueue.mayPunctuate(systemTime, PunctuationType.WALL_CLOCK_TIME, this);
 
         if (punctuated) {
             commitNeeded = true;
@@ -841,5 +845,24 @@ public class StreamTask extends AbstractTask implements ProcessorNodePunctuator 
 
     Producer<byte[], byte[]> getProducer() {
         return producer;
+    }
+
+    private void initializeTransactions() {
+        try {
+            producer.initTransactions();
+        } catch (final TimeoutException retriable) {
+            log.error(
+                "Timeout exception caught when initializing transactions for task {}. " +
+                    "This might happen if the broker is slow to respond, if the network connection to " +
+                    "the broker was interrupted, or if similar circumstances arise. " +
+                    "You can increase producer parameter `max.block.ms` to increase this timeout.",
+                id,
+                retriable
+            );
+            throw new StreamsException(
+                format("%sFailed to initialize task %s due to timeout.", logPrefix, id),
+                retriable
+            );
+        }
     }
 }

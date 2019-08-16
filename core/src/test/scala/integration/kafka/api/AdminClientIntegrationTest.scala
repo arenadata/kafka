@@ -1054,7 +1054,7 @@ class AdminClientIntegrationTest extends IntegrationTestHarness with Logging {
   @Test
   def testForceClose(): Unit = {
     val config = createConfig()
-    config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:22")
+    config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, s"localhost:${TestUtils.IncorrectBrokerPort}")
     client = AdminClient.create(config)
     // Because the bootstrap servers are set up incorrectly, this call will not complete, but must be
     // cancelled by the close operation.
@@ -1071,7 +1071,7 @@ class AdminClientIntegrationTest extends IntegrationTestHarness with Logging {
   @Test
   def testMinimumRequestTimeouts(): Unit = {
     val config = createConfig()
-    config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:22")
+    config.put(AdminClientConfig.BOOTSTRAP_SERVERS_CONFIG, s"localhost:${TestUtils.IncorrectBrokerPort}")
     config.put(AdminClientConfig.REQUEST_TIMEOUT_MS_CONFIG, "0")
     client = AdminClient.create(config)
     val startTimeMs = Time.SYSTEM.milliseconds()
@@ -1079,7 +1079,7 @@ class AdminClientIntegrationTest extends IntegrationTestHarness with Logging {
       new CreateTopicsOptions().timeoutMs(2)).all()
     assertFutureExceptionTypeEquals(future, classOf[TimeoutException])
     val endTimeMs = Time.SYSTEM.milliseconds()
-    assertTrue("Expected the timeout to take at least one millisecond.", endTimeMs > startTimeMs);
+    assertTrue("Expected the timeout to take at least one millisecond.", endTimeMs > startTimeMs)
   }
 
   /**
@@ -1211,6 +1211,23 @@ class AdminClientIntegrationTest extends IntegrationTestHarness with Logging {
     }
   }
 
+  @Test
+  def testLongTopicNames(): Unit = {
+    val client = AdminClient.create(createConfig)
+    val longTopicName = String.join("", Collections.nCopies(249, "x"));
+    val invalidTopicName = String.join("", Collections.nCopies(250, "x"));
+    val newTopics2 = Seq(new NewTopic(invalidTopicName, 3, 3),
+                         new NewTopic(longTopicName, 3, 3))
+    val results = client.createTopics(newTopics2.asJava).values()
+    assertTrue(results.containsKey(longTopicName))
+    results.get(longTopicName).get()
+    assertTrue(results.containsKey(invalidTopicName))
+    assertFutureExceptionTypeEquals(results.get(invalidTopicName), classOf[InvalidTopicException])
+    assertFutureExceptionTypeEquals(client.alterReplicaLogDirs(
+      Map(new TopicPartitionReplica(longTopicName, 0, 0) -> servers(0).config.logDirs(0)).asJava).all(),
+      classOf[InvalidTopicException])
+    client.close()
+  }
 }
 
 object AdminClientIntegrationTest {

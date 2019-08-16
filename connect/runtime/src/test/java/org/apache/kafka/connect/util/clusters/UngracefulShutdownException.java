@@ -14,8 +14,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.kafka.streams.processor.internals;
+package org.apache.kafka.connect.util.clusters;
 
-public interface TimestampSupplier {
-    long get();
+import org.apache.kafka.common.KafkaException;
+
+/**
+ * An exception that can be used from within an {@code Exit.Procedure} to mask exit or halt calls
+ * and signify that the service terminated abruptly. It's intended to be used only from within
+ * integration tests.
+ */
+public class UngracefulShutdownException extends KafkaException {
+    public UngracefulShutdownException(String s) {
+        super(s);
+    }
+
+    public UngracefulShutdownException(String s, Throwable throwable) {
+        super(s, throwable);
+    }
+
+    public UngracefulShutdownException(Throwable throwable) {
+        super(throwable);
+    }
 }

@@ -103,8 +103,20 @@ public class Worker {
             WorkerConfig config,
             OffsetBackingStore offsetBackingStore
     ) {
+        this(workerId, time, plugins, config, offsetBackingStore, Executors.newCachedThreadPool());
+    }
+
+    @SuppressWarnings("deprecation")
+    Worker(
+            String workerId,
+            Time time,
+            Plugins plugins,
+            WorkerConfig config,
+            OffsetBackingStore offsetBackingStore,
+            ExecutorService executorService
+    ) {
         this.metrics = new ConnectMetrics(workerId, config, time);
-        this.executor = Executors.newCachedThreadPool();
+        this.executor = executorService;
         this.workerId = workerId;
         this.time = time;
         this.plugins = plugins;
@@ -493,6 +505,7 @@ public class Worker {
         if (task instanceof SourceTask) {
             retryWithToleranceOperator.reporters(sourceTaskReporters(id, connConfig, errorHandlingMetrics));
             TransformationChain<SourceRecord> transformationChain = new TransformationChain<>(connConfig.<SourceRecord>transformations(), retryWithToleranceOperator);
+            log.info("Initializing: {}", transformationChain);
             OffsetStorageReader offsetReader = new OffsetStorageReaderImpl(offsetBackingStore, id.connector(),
                     internalKeyConverter, internalValueConverter);
             OffsetStorageWriter offsetWriter = new OffsetStorageWriter(offsetBackingStore, id.connector(),
@@ -505,6 +518,7 @@ public class Worker {
                     time, retryWithToleranceOperator);
         } else if (task instanceof SinkTask) {
             TransformationChain<SinkRecord> transformationChain = new TransformationChain<>(connConfig.<SinkRecord>transformations(), retryWithToleranceOperator);
+            log.info("Initializing: {}", transformationChain);
             SinkConnectorConfig sinkConfig = new SinkConnectorConfig(plugins, connConfig.originalsStrings());
             retryWithToleranceOperator.reporters(sinkTaskReporters(id, sinkConfig, errorHandlingMetrics));
             return new WorkerSinkTask(id, (SinkTask) task, statusListener, initialState, config, configState, metrics, keyConverter,

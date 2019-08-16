@@ -16,7 +16,6 @@
  */
 package org.apache.kafka.streams;
 
-import java.time.Duration;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.header.Header;
@@ -54,6 +53,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -114,8 +114,6 @@ public class TopologyTestDriverTest {
         new StringSerializer(),
         new LongSerializer());
 
-    private final boolean eosEnabled;
-
     @Parameterized.Parameters(name = "Eos enabled = {0}")
     public static Collection<Object[]> data() {
         final List<Object[]> values = new ArrayList<>();
@@ -126,7 +124,6 @@ public class TopologyTestDriverTest {
     }
 
     public TopologyTestDriverTest(final boolean eosEnabled) {
-        this.eosEnabled = eosEnabled;
         if (eosEnabled) {
             config.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE);
         }
@@ -878,15 +875,33 @@ public class TopologyTestDriverTest {
         }
 
         private void flushStore() {
-            final KeyValueIterator<String, Long> it = store.all();
-            while (it.hasNext()) {
-                final KeyValue<String, Long> next = it.next();
-                context.forward(next.key, next.value);
+            try (final KeyValueIterator<String, Long> it = store.all()) {
+                while (it.hasNext()) {
+                    final KeyValue<String, Long> next = it.next();
+                    context.forward(next.key, next.value);
+                }
             }
         }
 
         @Override
         public void close() {}
+    }
+
+    @Test
+    public void shouldAllowPrePopulatingStatesStoresWithCachingEnabled() {
+        final Topology topology = new Topology();
+        topology.addSource("sourceProcessor", "input-topic");
+        topology.addProcessor("aggregator", new CustomMaxAggregatorSupplier(), "sourceProcessor");
+        topology.addStateStore(Stores.keyValueStoreBuilder(
+            Stores.inMemoryKeyValueStore("aggStore"),
+            Serdes.String(),
+            Serdes.Long()).withCachingEnabled(), // intentionally turn on caching to achieve better test coverage
+            "aggregator");
+
+        testDriver = new TopologyTestDriver(topology, config);
+
+        store = testDriver.getKeyValueStore("aggStore");
+        store.put("a", 21L);
     }
 
     @Test
@@ -928,21 +943,20 @@ public class TopologyTestDriverTest {
         config.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass().getName());
         config.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.Long().getClass().getName());
 
-        {
-            final TopologyTestDriver testDriver = new TopologyTestDriver(topology, config);
+        try (final TopologyTestDriver testDriver = new TopologyTestDriver(topology, config)) {
             Assert.assertNull(testDriver.getKeyValueStore("storeProcessorStore").get("a"));
             testDriver.pipeInput(recordFactory.create("input-topic", "a", 1L));
             Assert.assertEquals(1L, testDriver.getKeyValueStore("storeProcessorStore").get("a"));
-            testDriver.close();
         }
 
-        {
-            final TopologyTestDriver testDriver = new TopologyTestDriver(topology, config);
+
+        try (final TopologyTestDriver testDriver = new TopologyTestDriver(topology, config)) {
             Assert.assertNull(
                 "Closing the prior test driver should have cleaned up this store and value.",
                 testDriver.getKeyValueStore("storeProcessorStore").get("a")
             );
         }
+
     }
 
     @Test

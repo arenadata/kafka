@@ -1,5 +1,4 @@
 # Arenadata Streaming Platform
-==============================
 
 See our [web site](https://arenadata.tech/products/ads/) for details on the project.
 

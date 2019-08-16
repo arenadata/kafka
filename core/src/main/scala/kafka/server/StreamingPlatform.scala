@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package kafka.server
+package StreamingPlatform.server
 
 import java.lang.{Long => JLong}
 import java.nio.ByteBuffer
@@ -24,41 +24,41 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.{Collections, Optional, Properties}
 
-import kafka.admin.{AdminUtils, RackAwareMode}
-import kafka.api.{ApiVersion, KAFKA_0_11_0_IV0}
-import kafka.cluster.Partition
-import kafka.common.OffsetAndMetadata
-import kafka.controller.KafkaController
-import kafka.coordinator.group.{GroupCoordinator, JoinGroupResult}
-import kafka.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
-import kafka.message.ZStdCompressionCodec
-import kafka.network.RequestChannel
-import kafka.security.SecurityUtils
-import kafka.security.auth.{Resource, _}
-import kafka.server.QuotaFactory.{QuotaManagers, UnboundedQuota}
-import kafka.utils.{CoreUtils, Logging}
-import kafka.zk.{AdminZkClient, KafkaZkClient}
-import org.apache.kafka.common.acl.{AccessControlEntry, AclBinding}
-import org.apache.kafka.common.config.ConfigResource
-import org.apache.kafka.common.errors._
-import org.apache.kafka.common.internals.FatalExitError
-import org.apache.kafka.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
-import org.apache.kafka.common.metrics.Metrics
-import org.apache.kafka.common.network.{ListenerName, Send}
-import org.apache.kafka.common.protocol.{ApiKeys, Errors}
-import org.apache.kafka.common.record.{BaseRecords, ControlRecordType, EndTransactionMarker, LazyDownConversionRecords, MemoryRecords, MultiRecordsSend, RecordBatch, RecordConversionStats, Records}
-import org.apache.kafka.common.requests.CreateAclsResponse.AclCreationResponse
-import org.apache.kafka.common.requests.CreateTopicsRequest.TopicDetails
-import org.apache.kafka.common.requests.DeleteAclsResponse.{AclDeletionResult, AclFilterResponse}
-import org.apache.kafka.common.requests.DescribeLogDirsResponse.LogDirInfo
-import org.apache.kafka.common.requests.ProduceResponse.PartitionResponse
-import org.apache.kafka.common.requests._
-import org.apache.kafka.common.resource.PatternType.LITERAL
-import org.apache.kafka.common.resource.{PatternType, ResourcePattern}
-import org.apache.kafka.common.security.auth.{KafkaPrincipal, SecurityProtocol}
-import org.apache.kafka.common.security.token.delegation.{DelegationToken, TokenInformation}
-import org.apache.kafka.common.utils.{Time, Utils}
-import org.apache.kafka.common.{Node, TopicPartition}
+import StreamingPlatform.admin.{AdminUtils, RackAwareMode}
+import StreamingPlatform.api.{ApiVersion, StreamingPlatform_0_11_0_IV0}
+import StreamingPlatform.cluster.Partition
+import StreamingPlatform.common.OffsetAndMetadata
+import StreamingPlatform.controller.StreamingPlatformController
+import StreamingPlatform.coordinator.group.{GroupCoordinator, JoinGroupResult}
+import StreamingPlatform.coordinator.transaction.{InitProducerIdResult, TransactionCoordinator}
+import StreamingPlatform.message.ZStdCompressionCodec
+import StreamingPlatform.network.RequestChannel
+import StreamingPlatform.security.SecurityUtils
+import StreamingPlatform.security.auth.{Resource, _}
+import StreamingPlatform.server.QuotaFactory.{QuotaManagers, UnboundedQuota}
+import StreamingPlatform.utils.{CoreUtils, Logging}
+import StreamingPlatform.zk.{AdminZkClient, StreamingPlatformZkClient}
+import org.apache.StreamingPlatform.common.acl.{AccessControlEntry, AclBinding}
+import org.apache.StreamingPlatform.common.config.ConfigResource
+import org.apache.StreamingPlatform.common.errors._
+import org.apache.StreamingPlatform.common.internals.FatalExitError
+import org.apache.StreamingPlatform.common.internals.Topic.{GROUP_METADATA_TOPIC_NAME, TRANSACTION_STATE_TOPIC_NAME, isInternal}
+import org.apache.StreamingPlatform.common.metrics.Metrics
+import org.apache.StreamingPlatform.common.network.{ListenerName, Send}
+import org.apache.StreamingPlatform.common.protocol.{ApiKeys, Errors}
+import org.apache.StreamingPlatform.common.record.{BaseRecords, ControlRecordType, EndTransactionMarker, LazyDownConversionRecords, MemoryRecords, MultiRecordsSend, RecordBatch, RecordConversionStats, Records}
+import org.apache.StreamingPlatform.common.requests.CreateAclsResponse.AclCreationResponse
+import org.apache.StreamingPlatform.common.requests.CreateTopicsRequest.TopicDetails
+import org.apache.StreamingPlatform.common.requests.DeleteAclsResponse.{AclDeletionResult, AclFilterResponse}
+import org.apache.StreamingPlatform.common.requests.DescribeLogDirsResponse.LogDirInfo
+import org.apache.StreamingPlatform.common.requests.ProduceResponse.PartitionResponse
+import org.apache.StreamingPlatform.common.requests._
+import org.apache.StreamingPlatform.common.resource.PatternType.LITERAL
+import org.apache.StreamingPlatform.common.resource.{PatternType, ResourcePattern}
+import org.apache.StreamingPlatform.common.security.auth.{StreamingPlatformPrincipal, SecurityProtocol}
+import org.apache.StreamingPlatform.common.security.token.delegation.{DelegationToken, TokenInformation}
+import org.apache.StreamingPlatform.common.utils.{Time, Utils}
+import org.apache.StreamingPlatform.common.{Node, TopicPartition}
 
 import scala.collection.JavaConverters._
 import scala.collection._
@@ -66,17 +66,17 @@ import scala.collection.mutable.ArrayBuffer
 import scala.util.{Failure, Success, Try}
 
 /**
- * Logic to handle the various Kafka requests
+ * Logic to handle the various StreamingPlatform requests
  */
-class KafkaApis(val requestChannel: RequestChannel,
+class StreamingPlatformApis(val requestChannel: RequestChannel,
                 val replicaManager: ReplicaManager,
                 val adminManager: AdminManager,
                 val groupCoordinator: GroupCoordinator,
                 val txnCoordinator: TransactionCoordinator,
-                val controller: KafkaController,
-                val zkClient: KafkaZkClient,
+                val controller: StreamingPlatformController,
+                val zkClient: StreamingPlatformZkClient,
                 val brokerId: Int,
-                val config: KafkaConfig,
+                val config: StreamingPlatformConfig,
                 val metadataCache: MetadataCache,
                 val metrics: Metrics,
                 val authorizer: Option[Authorizer],
@@ -88,7 +88,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                 val tokenManager: DelegationTokenManager) extends Logging {
 
   type FetchResponseStats = Map[TopicPartition, RecordConversionStats]
-  this.logIdent = "[KafkaApi-%d] ".format(brokerId)
+  this.logIdent = "[StreamingPlatformApi-%d] ".format(brokerId)
   val adminZkClient = new AdminZkClient(zkClient)
 
   def close() {
@@ -522,7 +522,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         }
       }
     } else {
-      // Regular Kafka consumers need READ permission on each partition they are fetching.
+      // Regular StreamingPlatform consumers need READ permission on each partition they are fetching.
       fetchContext.foreachPartition { (topicPartition, data) =>
         if (!authorize(request.session, Read, Resource(Topic, topicPartition.topic, LITERAL)))
           erroneous += topicPartition -> errorResponse(Errors.TOPIC_AUTHORIZATION_FAILED)
@@ -773,7 +773,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         // are typically transient and there is no value in logging the entire stack trace for the same
         case e @ (_ : UnknownTopicOrPartitionException |
                   _ : NotLeaderForPartitionException |
-                  _ : KafkaStorageException) =>
+                  _ : StreamingPlatformStorageException) =>
           debug("Offset request with correlation id %d from client %s on partition %s failed due to %s".format(
             correlationId, clientId, topicPartition, e.getMessage))
           (topicPartition, new ListOffsetResponse.PartitionData(Errors.forException(e), List[JLong]().asJava))
@@ -838,7 +838,7 @@ class KafkaApis(val requestChannel: RequestChannel,
                     _ : NotLeaderForPartitionException |
                     _ : UnknownLeaderEpochException |
                     _ : FencedLeaderEpochException |
-                    _ : KafkaStorageException |
+                    _ : StreamingPlatformStorageException |
                     _ : UnsupportedForMessageFormatException) =>
             debug(s"Offset request with correlation id $correlationId from client $clientId on " +
                 s"partition $topicPartition failed due to ${e.getMessage}")
@@ -889,7 +889,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         if (aliveBrokers.size < config.offsetsTopicReplicationFactor) {
           error(s"Number of alive brokers '${aliveBrokers.size}' does not meet the required replication factor " +
             s"'${config.offsetsTopicReplicationFactor}' for the offsets topic (configured via " +
-            s"'${KafkaConfig.OffsetsTopicReplicationFactorProp}'). This error can be ignored if the cluster is starting up " +
+            s"'${StreamingPlatformConfig.OffsetsTopicReplicationFactorProp}'). This error can be ignored if the cluster is starting up " +
             s"and not all brokers are up yet.")
           new MetadataResponse.TopicMetadata(Errors.COORDINATOR_NOT_AVAILABLE, topic, true, java.util.Collections.emptyList())
         } else {
@@ -900,7 +900,7 @@ class KafkaApis(val requestChannel: RequestChannel,
         if (aliveBrokers.size < config.transactionTopicReplicationFactor) {
           error(s"Number of alive brokers '${aliveBrokers.size}' does not meet the required replication factor " +
             s"'${config.transactionTopicReplicationFactor}' for the transactions state topic (configured via " +
-            s"'${KafkaConfig.TransactionsTopicReplicationFactorProp}'). This error can be ignored if the cluster is starting up " +
+            s"'${StreamingPlatformConfig.TransactionsTopicReplicationFactorProp}'). This error can be ignored if the cluster is starting up " +
             s"and not all brokers are up yet.")
           new MetadataResponse.TopicMetadata(Errors.COORDINATOR_NOT_AVAILABLE, topic, true, java.util.Collections.emptyList())
         } else {
@@ -1068,7 +1068,7 @@ class KafkaApis(val requestChannel: RequestChannel,
             val unauthorizedPartitionData = unauthorizedPartitions.map(_ -> OffsetFetchResponse.UNAUTHORIZED_PARTITION).toMap
             new OffsetFetchResponse(requestThrottleMs, Errors.NONE, (authorizedPartitionData ++ unauthorizedPartitionData).asJava)
           } else {
-            // versions 1 and above read offsets from Kafka
+            // versions 1 and above read offsets from StreamingPlatform
             if (offsetFetchRequest.isAllPartitions) {
               val (error, allPartitionData) = groupCoordinator.handleFetchOffsets(offsetFetchRequest.groupId)
               if (error != Errors.NONE)
@@ -1330,7 +1330,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   def handleApiVersionsRequest(request: RequestChannel.Request) {
     // Note that broker returns its full list of supported ApiKeys and versions regardless of current
     // authentication state (e.g., before SASL authentication on an SASL listener, do note that no
-    // Kafka protocol requests may take place on a SSL listener before the SSL handshake is finished).
+    // StreamingPlatform protocol requests may take place on a SSL listener before the SSL handshake is finished).
     // If this is considered to leak information about the broker version a workaround is to use SSL
     // with client authentication which is performed at an earlier stage of the connection where the
     // ApiVersionRequest is not available.
@@ -1565,7 +1565,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleEndTxnRequest(request: RequestChannel.Request): Unit = {
-    ensureInterBrokerVersion(KAFKA_0_11_0_IV0)
+    ensureInterBrokerVersion(StreamingPlatform_0_11_0_IV0)
     val endTxnRequest = request.body[EndTxnRequest]
     val transactionalId = endTxnRequest.transactionalId
 
@@ -1590,7 +1590,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleWriteTxnMarkersRequest(request: RequestChannel.Request): Unit = {
-    ensureInterBrokerVersion(KAFKA_0_11_0_IV0)
+    ensureInterBrokerVersion(StreamingPlatform_0_11_0_IV0)
     authorizeClusterAction(request)
     val writeTxnMarkersRequest = request.body[WriteTxnMarkersRequest]
     val errors = new ConcurrentHashMap[java.lang.Long, util.Map[TopicPartition, Errors]]()
@@ -1700,7 +1700,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleAddPartitionToTxnRequest(request: RequestChannel.Request): Unit = {
-    ensureInterBrokerVersion(KAFKA_0_11_0_IV0)
+    ensureInterBrokerVersion(StreamingPlatform_0_11_0_IV0)
     val addPartitionsToTxnRequest = request.body[AddPartitionsToTxnRequest]
     val transactionalId = addPartitionsToTxnRequest.transactionalId
     val partitionsToAdd = addPartitionsToTxnRequest.partitions.asScala
@@ -1713,7 +1713,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       val authorizedPartitions = mutable.Set[TopicPartition]()
 
       for (topicPartition <- partitionsToAdd) {
-        if (org.apache.kafka.common.internals.Topic.isInternal(topicPartition.topic) ||
+        if (org.apache.StreamingPlatform.common.internals.Topic.isInternal(topicPartition.topic) ||
             !authorize(request.session, Write, Resource(Topic, topicPartition.topic, LITERAL)))
           unauthorizedTopicErrors += topicPartition -> Errors.TOPIC_AUTHORIZATION_FAILED
         else if (!metadataCache.contains(topicPartition))
@@ -1752,7 +1752,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleAddOffsetsToTxnRequest(request: RequestChannel.Request): Unit = {
-    ensureInterBrokerVersion(KAFKA_0_11_0_IV0)
+    ensureInterBrokerVersion(StreamingPlatform_0_11_0_IV0)
     val addOffsetsToTxnRequest = request.body[AddOffsetsToTxnRequest]
     val transactionalId = addOffsetsToTxnRequest.transactionalId
     val groupId = addOffsetsToTxnRequest.consumerGroupId
@@ -1784,7 +1784,7 @@ class KafkaApis(val requestChannel: RequestChannel,
   }
 
   def handleTxnOffsetCommitRequest(request: RequestChannel.Request): Unit = {
-    ensureInterBrokerVersion(KAFKA_0_11_0_IV0)
+    ensureInterBrokerVersion(StreamingPlatform_0_11_0_IV0)
     val header = request.header
     val txnOffsetCommitRequest = request.body[TxnOffsetCommitRequest]
 
@@ -2087,7 +2087,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     else {
       val renewerList = createTokenRequest.renewers().asScala.toList
 
-      if (renewerList.exists(principal =>  principal.getPrincipalType != KafkaPrincipal.USER_TYPE)) {
+      if (renewerList.exists(principal =>  principal.getPrincipalType != StreamingPlatformPrincipal.USER_TYPE)) {
         sendResponseMaybeThrottle(request, requestThrottleMs =>
           new CreateDelegationTokenResponse(requestThrottleMs, Errors.INVALID_PRINCIPAL_TYPE, request.session.principal))
       }
@@ -2171,7 +2171,7 @@ class KafkaApis(val requestChannel: RequestChannel,
       }
       else {
         val owners = if (describeTokenRequest.owners == null) None else Some(describeTokenRequest.owners.asScala.toList)
-        def authorizeToken(tokenId: String) = authorize(request.session, Describe, Resource(kafka.security.auth.DelegationToken, tokenId, LITERAL))
+        def authorizeToken(tokenId: String) = authorize(request.session, Describe, Resource(StreamingPlatform.security.auth.DelegationToken, tokenId, LITERAL))
         def eligible(token: TokenInformation) = DelegationTokenManager.filterToken(requestPrincipal, owners, token, authorizeToken)
         val tokens =  tokenManager.getTokens(eligible)
         sendResponseCallback(Errors.NONE, tokens)
@@ -2184,7 +2184,7 @@ class KafkaApis(val requestChannel: RequestChannel,
     if (request.session.principal.tokenAuthenticated ||
       protocol == SecurityProtocol.PLAINTEXT ||
       // disallow requests from 1-way SSL
-      (protocol == SecurityProtocol.SSL && request.session.principal == KafkaPrincipal.ANONYMOUS))
+      (protocol == SecurityProtocol.SSL && request.session.principal == StreamingPlatformPrincipal.ANONYMOUS))
       false
     else
       true

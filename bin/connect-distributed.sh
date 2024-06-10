@@ -14,6 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+	
+KAFKA_CONNECT_HOME=/usr/lib/kafka-connect
+. $KAFKA_CONNECT_HOME/config/kafka-connect-env.sh
+
 if [ $# -lt 1 ];
 then
         echo "USAGE: $0 [-daemon] connect-distributed.properties"

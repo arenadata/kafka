@@ -4117,3 +4117,53 @@ def verifyVersionConsistencyTask = tasks.register('verifyVersionConsistency') {
 }
 
 check.dependsOn verifyVersionConsistencyTask
+
+def connectBinFiles = [
+   'connect-distributed.sh',
+   'connect-mirror-maker.sh',
+   'connect-standalone.sh',
+   'kafka-run-class.sh'
+]
+
+def connectConfigFiles = [
+  'connect-console-sink.properties',
+  'connect-console-source.properties',
+  'connect-distributed.properties',
+  'connect-file-sink.properties',
+  'connect-file-source.properties',
+  'connect-log4j.properties',
+  'connect-mirror-maker.properties',
+  'connect-standalone.properties'
+]
+
+
+tasks.create(name: "connectReleaseTarGz", type: Tar) {
+  
+  compression = Compression.GZIP
+  archiveBaseName = "kafka-connect_${versions.baseScala}"
+
+   from(project.file("$rootDir/bin")) { 
+      include connectBinFiles
+      into "bin/" 
+    }
+    from(project.file("$rootDir/config")) { 
+      include connectConfigFiles
+      into "config/" 
+      }
+    from(project.file("$rootDir/licenses")) { into "licenses/" }
+    from "$rootDir/LICENSE-binary" rename {String filename -> filename.replace("-binary", "")}
+    from "$rootDir/NOTICE"
+
+    // Add runtime dependencies
+    from(configurations.runtimeClasspath) { into("libs/") }
+
+    // Add Kafka Connect packages
+    connectPkgs.each { pkg ->
+        from(project(pkg).jar) { into("libs/") }
+        from(project(pkg).configurations.runtimeClasspath) { into("libs/") }
+    }
+
+    duplicatesStrategy 'exclude'
+
+}
+

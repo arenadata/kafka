@@ -3607,6 +3607,8 @@ tasks.create(name: "connectReleaseTarGz", type: Tar) {
         from(project(pkg).jar) { into("libs/") }
         from(project(pkg).configurations.runtimeClasspath) { into("libs/") }
     }
+    from(project(':log4j-appender').jar) { into("libs/") }
+    from(project(':log4j-appender').configurations.runtimeClasspath) { into("libs/") }
 
     duplicatesStrategy 'exclude'
 

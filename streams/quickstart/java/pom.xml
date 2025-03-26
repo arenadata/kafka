@@ -26,7 +26,7 @@
     <parent>
         <groupId>org.apache.kafka</groupId>
         <artifactId>streams-quickstart</artifactId>
-        <version>3.8.1</version>
+        <version>3.8.1_arenadata1</version>
         <relativePath>..</relativePath>
     </parent>
 

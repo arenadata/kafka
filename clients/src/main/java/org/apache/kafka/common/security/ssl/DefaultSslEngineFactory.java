@@ -16,6 +16,8 @@
  */
 package org.apache.kafka.common.security.ssl;
 
+import com.linkedin.ktls.KernelTls;
+
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.config.SslClientAuth;
 import org.apache.kafka.common.config.SslConfigs;
@@ -78,6 +80,8 @@ public class DefaultSslEngineFactory implements SslEngineFactory {
     private static final Logger log = LoggerFactory.getLogger(DefaultSslEngineFactory.class);
     public static final String PEM_TYPE = "PEM";
 
+    private final KernelTls kernelTls = new KernelTls();
+
     private Map<String, ?> configs;
     private String protocol;
     private String provider;
@@ -90,6 +94,8 @@ public class DefaultSslEngineFactory implements SslEngineFactory {
     private SecureRandom secureRandomImplementation;
     private SSLContext sslContext;
     private SslClientAuth sslClientAuth;
+    private Boolean isKernelOffloadEnabled;
+    private List<String> cipherSuitesWithKernelOffload;
 
 
     @Override
@@ -135,6 +141,11 @@ public class DefaultSslEngineFactory implements SslEngineFactory {
         this.protocol = (String) configs.get(SslConfigs.SSL_PROTOCOL_CONFIG);
         this.provider = (String) configs.get(SslConfigs.SSL_PROVIDER_CONFIG);
         SecurityUtils.addConfiguredSecurityProviders(this.configs);
+
+        this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.parseBoolean(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
+        if (isKernelOffloadEnabled) {
+            this.cipherSuitesWithKernelOffload = kernelTls.supportedCipherSuites();
+        }
 
         List<String> cipherSuitesList = (List<String>) configs.get(SslConfigs.SSL_CIPHER_SUITES_CONFIG);
         if (!cipherSuitesList.isEmpty()) {
@@ -184,9 +195,24 @@ public class DefaultSslEngineFactory implements SslEngineFactory {
         return this.sslContext;
     }
 
+    private void maybeSetSslEngineCipherSuites(SSLEngine sslEngine) {
+        if (isKernelOffloadEnabled) {
+            final String[] cipherSuitesToEnable = sslEngine.getEnabledCipherSuites();
+            final List<String> reOrderedCipherSuites = new ArrayList<>();
+            Arrays.stream(cipherSuitesToEnable)
+                .filter(cipherSuitesWithKernelOffload::contains)
+                .forEach(reOrderedCipherSuites::add);
+            Arrays.stream(cipherSuitesToEnable)
+                .filter(cs -> !cipherSuitesWithKernelOffload.contains(cs))
+                .forEach(reOrderedCipherSuites::add);
+            sslEngine.setEnabledCipherSuites(reOrderedCipherSuites.toArray(new String[0]));
+        }
+    }
+
     private SSLEngine createSslEngine(ConnectionMode connectionMode, String peerHost, int peerPort, String endpointIdentification) {
         SSLEngine sslEngine = sslContext.createSSLEngine(peerHost, peerPort);
         if (cipherSuites != null) sslEngine.setEnabledCipherSuites(cipherSuites);
+        maybeSetSslEngineCipherSuites(sslEngine);
         if (enabledProtocols != null) sslEngine.setEnabledProtocols(enabledProtocols);
 
         if (connectionMode == ConnectionMode.SERVER) {

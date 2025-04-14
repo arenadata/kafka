@@ -42,6 +42,7 @@ public class SslChannelBuilder implements ChannelBuilder, ListenerReconfigurable
     private final ListenerName listenerName;
     private final boolean isInterBrokerListener;
     private final ConnectionMode connectionMode;
+    private Boolean isKernelOffloadEnabled;
     private SslFactory sslFactory;
     private Map<String, ?> configs;
     private SslPrincipalMapper sslPrincipalMapper;
@@ -66,6 +67,7 @@ public class SslChannelBuilder implements ChannelBuilder, ListenerReconfigurable
                 sslPrincipalMapper = SslPrincipalMapper.fromRules(sslPrincipalMappingRules);
             this.sslFactory = new SslFactory(connectionMode, null, isInterBrokerListener);
             this.sslFactory.configure(this.configs);
+            this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.valueOf(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
         } catch (KafkaException e) {
             throw e;
         } catch (Exception e) {
@@ -85,6 +87,7 @@ public class SslChannelBuilder implements ChannelBuilder, ListenerReconfigurable
 
     @Override
     public void reconfigure(Map<String, ?> configs) {
+        this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.valueOf(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
         sslFactory.reconfigure(configs);
     }
 
@@ -117,10 +120,14 @@ public class SslChannelBuilder implements ChannelBuilder, ListenerReconfigurable
         if (sslFactory != null) sslFactory.close();
     }
 
+    private boolean shouldEnableKernelOffload() {
+        return isKernelOffloadEnabled && connectionMode == ConnectionMode.SERVER;
+    }
+
     protected SslTransportLayer buildTransportLayer(SslFactory sslFactory, String id, SelectionKey key, ChannelMetadataRegistry metadataRegistry) throws IOException {
         SocketChannel socketChannel = (SocketChannel) key.channel();
         return SslTransportLayer.create(id, key, sslFactory.createSslEngine(socketChannel.socket()),
-            metadataRegistry);
+            metadataRegistry, shouldEnableKernelOffload());
     }
 
     /**

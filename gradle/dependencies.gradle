@@ -137,6 +137,7 @@ versions += [
   junitPlatform: "1.13.1",
   hdrHistogram: "2.2.2",
   hash4j: "0.22.0"
+  ktls: "0.0.4_arenadata1",
 ]
 
 libs += [
@@ -238,4 +239,5 @@ libs += [
   httpclient: "org.apache.httpcomponents:httpclient:$versions.httpclient",
   hdrHistogram: "org.hdrhistogram:HdrHistogram:$versions.hdrHistogram",
   hash4j: "com.dynatrace.hash4j:hash4j:$versions.hash4j",
+  ktls: "io.arenadata.ktls:ktls-jni:$versions.ktls",
 ]

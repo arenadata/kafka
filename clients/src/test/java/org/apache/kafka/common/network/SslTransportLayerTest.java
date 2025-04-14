@@ -114,6 +114,7 @@ public class SslTransportLayerTest {
             sslConfigOverrides.put(SslConfigs.SSL_PROTOCOL_CONFIG, tlsProtocol);
             sslConfigOverrides.put(SslConfigs.SSL_ENABLED_PROTOCOLS_CONFIG, List.of(tlsProtocol));
             sslConfigOverrides.put(SslConfigs.SSL_CIPHER_SUITES_CONFIG, List.of());
+            sslConfigOverrides.put(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG, false);
             init();
         }
 
@@ -129,6 +130,8 @@ public class SslTransportLayerTest {
             clientCertStores = certBuilder(false, "client", useInlinePem).addHostName("localhost").build();
             sslServerConfigs = getTrustingConfig(serverCertStores, clientCertStores);
             sslClientConfigs = getTrustingConfig(clientCertStores, serverCertStores);
+            sslServerConfigs.put(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG, false);
+            sslClientConfigs.put(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG, false);
             sslServerConfigs.put(SslConfigs.SSL_ENGINE_FACTORY_CLASS_CONFIG, DefaultSslEngineFactory.class);
             sslClientConfigs.put(SslConfigs.SSL_ENGINE_FACTORY_CLASS_CONFIG, DefaultSslEngineFactory.class);
         }

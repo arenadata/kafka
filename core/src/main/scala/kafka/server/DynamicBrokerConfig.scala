@@ -902,6 +902,7 @@ object DynamicListenerConfig {
     SslConfigs.SSL_SECURE_RANDOM_IMPLEMENTATION_CONFIG,
     BrokerSecurityConfigs.SSL_CLIENT_AUTH_CONFIG,
     SslConfigs.SSL_ENGINE_FACTORY_CLASS_CONFIG,
+    SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG,
 
     // SASL configs
     BrokerSecurityConfigs.SASL_MECHANISM_INTER_BROKER_PROTOCOL_CONFIG,

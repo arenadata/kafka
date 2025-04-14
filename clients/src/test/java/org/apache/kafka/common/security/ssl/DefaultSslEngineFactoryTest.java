@@ -204,6 +204,7 @@ public class DefaultSslEngineFactoryTest {
         configs.put(SslConfigs.SSL_PROTOCOL_CONFIG, "TLSv1.2");
         configs.put(SslConfigs.SSL_CIPHER_SUITES_CONFIG, List.of());
         configs.put(SslConfigs.SSL_ENABLED_PROTOCOLS_CONFIG, List.of());
+        configs.put(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG, SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE);
     }
 
     protected DefaultSslEngineFactory sslEngineFactory() {

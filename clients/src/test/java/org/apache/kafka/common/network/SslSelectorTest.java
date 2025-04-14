@@ -17,6 +17,7 @@
 package org.apache.kafka.common.network;
 
 import org.apache.kafka.common.config.SecurityConfig;
+import org.apache.kafka.common.config.SslConfigs;
 import org.apache.kafka.common.memory.MemoryPool;
 import org.apache.kafka.common.memory.SimpleMemoryPool;
 import org.apache.kafka.common.metrics.Metrics;
@@ -109,6 +110,7 @@ public abstract class SslSelectorTest extends SelectorTest {
                 TestSslUtils.DEFAULT_TLS_PROTOCOL_FOR_TESTS
         );
         sslServerConfigs.put(SecurityConfig.SECURITY_PROVIDERS_CONFIG, testProviderCreator.getClass().getName());
+        sslServerConfigs.put(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG, false);
         EchoServer server = new EchoServer(SecurityProtocol.SSL, sslServerConfigs);
         server.start();
         Time time = new MockTime();
@@ -363,7 +365,7 @@ public abstract class SslSelectorTest extends SelectorTest {
 
             public TestSslTransportLayer(String channelId, SelectionKey key, SSLEngine sslEngine,
                                          ChannelMetadataRegistry metadataRegistry) {
-                super(channelId, key, sslEngine, metadataRegistry);
+                super(channelId, key, sslEngine, metadataRegistry, SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_DEFAULT);
                 transportLayers.put(channelId, this);
             }
 

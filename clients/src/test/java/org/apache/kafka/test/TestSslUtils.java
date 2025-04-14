@@ -215,6 +215,7 @@ public class TestSslUtils {
         List<String> enabledProtocols  = new ArrayList<>();
         enabledProtocols.add(tlsProtocol);
         sslConfigs.put(SslConfigs.SSL_ENABLED_PROTOCOLS_CONFIG, enabledProtocols);
+        sslConfigs.put(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG, SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE);
 
         return sslConfigs;
     }
@@ -690,6 +691,7 @@ public class TestSslUtils {
             List<String> enabledProtocols  = new ArrayList<>();
             enabledProtocols.add(tlsProtocol);
             sslConfigs.put(SslConfigs.SSL_ENABLED_PROTOCOLS_CONFIG, enabledProtocols);
+            sslConfigs.put(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG, SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE);
 
             return sslConfigs;
         }
@@ -702,6 +704,7 @@ public class TestSslUtils {
             Map<String, Object> sslConfigs = new HashMap<>();
             sslConfigs.put(SslConfigs.SSL_PROTOCOL_CONFIG, tlsProtocol);
             sslConfigs.put(SslConfigs.SSL_ENABLED_PROTOCOLS_CONFIG, Collections.singletonList(tlsProtocol));
+            sslConfigs.put(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG, SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE);
 
             if (connectionMode != ConnectionMode.CLIENT || useClientCert) {
                 KeyPair keyPair = generateKeyPair(algorithm);

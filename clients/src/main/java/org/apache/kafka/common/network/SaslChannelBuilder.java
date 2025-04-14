@@ -101,6 +101,7 @@ public class SaslChannelBuilder implements ChannelBuilder, ListenerReconfigurabl
     private SslFactory sslFactory;
     private Map<String, ?> configs;
     private KerberosShortNamer kerberosShortNamer;
+    private Boolean isKernelOffloadEnabled;
 
     public SaslChannelBuilder(ConnectionMode connectionMode,
                               Map<String, JaasContext> jaasContexts,
@@ -178,6 +179,7 @@ public class SaslChannelBuilder implements ChannelBuilder, ListenerReconfigurabl
                     maybeAddNativeGssapiCredentials(subject);
             }
             if (this.securityProtocol == SecurityProtocol.SASL_SSL) {
+                this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.valueOf(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
                 // Disable SSL client authentication as we are using SASL authentication
                 this.sslFactory = new SslFactory(connectionMode, sslClientAuthOverride, isInterBrokerListener);
                 this.sslFactory.configure(configs);
@@ -206,6 +208,7 @@ public class SaslChannelBuilder implements ChannelBuilder, ListenerReconfigurabl
     @Override
     public void reconfigure(Map<String, ?> configs) {
         if (this.securityProtocol == SecurityProtocol.SASL_SSL)
+            this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.valueOf(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
             sslFactory.reconfigure(configs);
     }
 
@@ -262,13 +265,17 @@ public class SaslChannelBuilder implements ChannelBuilder, ListenerReconfigurabl
         if (sslFactory != null) sslFactory.close();
     }
 
+    private boolean shouldEnableKernelOffload() {
+        return isKernelOffloadEnabled && connectionMode == ConnectionMode.SERVER;
+    }
+
     // Visible to override for testing
     protected TransportLayer buildTransportLayer(String id, SelectionKey key, SocketChannel socketChannel,
                                                  ChannelMetadataRegistry metadataRegistry) throws IOException {
         if (this.securityProtocol == SecurityProtocol.SASL_SSL) {
             return SslTransportLayer.create(id, key,
                 sslFactory.createSslEngine(socketChannel.socket()),
-                metadataRegistry);
+                metadataRegistry, shouldEnableKernelOffload());
         } else {
             return new PlaintextTransportLayer(key);
         }

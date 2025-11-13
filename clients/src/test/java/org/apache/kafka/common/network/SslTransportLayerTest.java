@@ -1411,7 +1411,7 @@ public class SslTransportLayerTest {
             private final AtomicInteger numDelayedFlushesRemaining;
 
             public TestSslTransportLayer(String channelId, SelectionKey key, SSLEngine sslEngine) {
-                super(channelId, key, sslEngine, new DefaultChannelMetadataRegistry());
+                super(channelId, key, sslEngine, new DefaultChannelMetadataRegistry(), false);
                 this.netReadBufSize = new ResizeableBufferSize(netReadBufSizeOverride);
                 this.netWriteBufSize = new ResizeableBufferSize(netWriteBufSizeOverride);
                 this.appBufSize = new ResizeableBufferSize(appBufSizeOverride);
@@ -1509,7 +1509,8 @@ public class SslTransportLayerTest {
                 "test-channel",
                 selectionKey,
                 sslEngine,
-                mock(ChannelMetadataRegistry.class)
+                mock(ChannelMetadataRegistry.class),
+                false
         );
 
         when(sslEngine.getSession()).thenReturn(sslSession);
@@ -1553,7 +1554,8 @@ public class SslTransportLayerTest {
                 "test-channel",
                 selectionKey,
                 sslEngine,
-                mock(ChannelMetadataRegistry.class)
+                mock(ChannelMetadataRegistry.class),
+                false
         );
 
         // When
@@ -1573,7 +1575,8 @@ public class SslTransportLayerTest {
                 "test-channel",
                 selectionKey,
                 sslEngine,
-                mock(ChannelMetadataRegistry.class)
+                mock(ChannelMetadataRegistry.class),
+                false
         ));
         doReturn(false).when(sslTransportLayer).hasPendingWrites();
 
@@ -1607,7 +1610,8 @@ public class SslTransportLayerTest {
                 "test-channel",
                 selectionKey,
                 sslEngine,
-                mock(ChannelMetadataRegistry.class)
+                mock(ChannelMetadataRegistry.class),
+                false
         ));
 
         ByteBuffer mockSocket = ByteBuffer.wrap("Hello, World!".getBytes(StandardCharsets.UTF_8));

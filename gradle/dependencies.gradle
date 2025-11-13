@@ -164,7 +164,7 @@ versions += [
   // Also make sure the compression levels in org.apache.kafka.common.record.CompressionType are still valid
   zstd: "1.5.6-4",
   junitPlatform: "1.10.2",
-  ktls: "0.0.4_arenadata1",
+  ktls: "0.0.4.2-3.9.1-2",
 ]
 
 libs += [
@@ -264,6 +264,6 @@ libs += [
   jfreechart: "jfreechart:jfreechart:$versions.jfreechart",
   mavenArtifact: "org.apache.maven:maven-artifact:$versions.mavenArtifact",
   zstd: "com.github.luben:zstd-jni:$versions.zstd",
-  ktls: "com.linkedin.ktls:ktls-jni:$versions.ktls",
+  ktls: "io.arenadata.ktls:ktls-jni:$versions.ktls",
   httpclient: "org.apache.httpcomponents:httpclient:$versions.httpclient"
 ]

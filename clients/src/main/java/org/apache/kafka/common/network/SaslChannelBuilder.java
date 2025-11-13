@@ -209,7 +209,7 @@ public class SaslChannelBuilder implements ChannelBuilder, ListenerReconfigurabl
     public void reconfigure(Map<String, ?> configs) {
         if (this.securityProtocol == SecurityProtocol.SASL_SSL)
             this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.valueOf(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
-            sslFactory.reconfigure(configs);
+        sslFactory.reconfigure(configs);
     }
 
     @Override

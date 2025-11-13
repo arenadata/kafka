@@ -142,7 +142,7 @@ public class DefaultSslEngineFactory implements SslEngineFactory {
         this.provider = (String) configs.get(SslConfigs.SSL_PROVIDER_CONFIG);
         SecurityUtils.addConfiguredSecurityProviders(this.configs);
 
-        this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.parseBoolean(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
+        this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? (Boolean) configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
         if (isKernelOffloadEnabled) {
             this.cipherSuitesWithKernelOffload = kernelTls.supportedCipherSuites();
         }

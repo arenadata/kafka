@@ -142,6 +142,7 @@ versions += [
   mavenArtifact: "3.9.6",
   metrics: "2.2.0",
   netty: "4.1.119.Final",
+  nettyIoUring: "4.2.10.Final",
   opentelemetryProto: "1.0.0-alpha",
   protobuf: "3.25.5", // a dependency of opentelemetryProto
   pcollections: "4.0.1",
@@ -265,5 +266,7 @@ libs += [
   mavenArtifact: "org.apache.maven:maven-artifact:$versions.mavenArtifact",
   zstd: "com.github.luben:zstd-jni:$versions.zstd",
   ktls: "io.arenadata.ktls:ktls-jni:$versions.ktls",
+  nettyIoUring: "io.netty:netty-transport-native-io_uring:$versions.nettyIoUring",
+  nettyIoUringLinuxX86_64: "io.netty:netty-transport-native-io_uring:$versions.nettyIoUring:linux-x86_64",
   httpclient: "org.apache.httpcomponents:httpclient:$versions.httpclient"
 ]

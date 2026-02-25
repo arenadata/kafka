@@ -114,7 +114,8 @@ public class KafkaChannel implements AutoCloseable {
     }
 
     private final String id;
-    private final TransportLayer transportLayer;
+    // package-private for use by io_uring selector
+    final TransportLayer transportLayer;
     private final Supplier<Authenticator> authenticatorCreator;
     private Authenticator authenticator;
     // Tracks accumulated network thread time. This is updated on the network thread.
@@ -249,7 +250,7 @@ public class KafkaChannel implements AutoCloseable {
     /**
      * externally muting a channel should be done via selector to ensure proper state handling
      */
-    void mute() {
+    public void mute() {
         if (muteState == ChannelMuteState.NOT_MUTED) {
             if (!disconnected) transportLayer.removeInterestOps(SelectionKey.OP_READ);
             muteState = ChannelMuteState.MUTED;
@@ -262,7 +263,7 @@ public class KafkaChannel implements AutoCloseable {
      *
      * @return Whether or not the channel is in the NOT_MUTED state after the call
      */
-    boolean maybeUnmute() {
+    public boolean maybeUnmute() {
         if (muteState == ChannelMuteState.MUTED) {
             if (!disconnected) transportLayer.addInterestOps(SelectionKey.OP_READ);
             muteState = ChannelMuteState.NOT_MUTED;
@@ -366,7 +367,11 @@ public class KafkaChannel implements AutoCloseable {
      * connected address after the socket is closed.
      */
     public InetAddress socketAddress() {
-        return transportLayer.socketChannel().socket().getInetAddress();
+        SocketChannel sc = transportLayer.socketChannel();
+        if (sc != null) {
+            return sc.socket().getInetAddress();
+        }
+        return null;
     }
 
     /**
@@ -376,11 +381,19 @@ public class KafkaChannel implements AutoCloseable {
      * connected port number after the socket is closed.
      */
     public int socketPort() {
-        return transportLayer.socketChannel().socket().getPort();
+        SocketChannel sc = transportLayer.socketChannel();
+        if (sc != null) {
+            return sc.socket().getPort();
+        }
+        return 0;
     }
 
     public String socketDescription() {
-        Socket socket = transportLayer.socketChannel().socket();
+        SocketChannel sc = transportLayer.socketChannel();
+        if (sc == null) {
+            return "id=" + id;
+        }
+        Socket socket = sc.socket();
         if (socket.getInetAddress() == null)
             return socket.getLocalAddress().toString();
         return socket.getInetAddress().toString();

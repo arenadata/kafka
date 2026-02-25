@@ -39,6 +39,7 @@ import static org.apache.kafka.common.config.ConfigDef.Importance.HIGH;
 import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
 import static org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM;
 import static org.apache.kafka.common.config.ConfigDef.Range.atLeast;
+import static org.apache.kafka.common.config.ConfigDef.ValidString.in;
 import static org.apache.kafka.common.config.ConfigDef.Type.INT;
 import static org.apache.kafka.common.config.ConfigDef.Type.LONG;
 import static org.apache.kafka.common.config.ConfigDef.Type.STRING;
@@ -127,6 +128,12 @@ public class SocketServerConfigs {
             "In Linux, you may also need to configure <code>somaxconn</code> and <code>tcp_max_syn_backlog</code> kernel parameters " +
             "accordingly to make the configuration takes effect.";
 
+    public static final String SOCKET_IO_MODE_CONFIG = "socket.io.mode";
+    public static final String SOCKET_IO_MODE_DEFAULT = "nio";
+    public static final String SOCKET_IO_MODE_DOC = "The I/O mode for broker network connections. Use 'nio' for standard Java NIO (default), " +
+            "or 'io_uring' for Linux io_uring-based I/O which can provide better throughput on Linux 5.1+ kernels. " +
+            "If 'io_uring' is selected but not available (non-Linux or missing native library), falls back to 'nio' with a warning.";
+
     public static final String MAX_CONNECTIONS_PER_IP_OVERRIDES_CONFIG = "max.connections.per.ip.overrides";
     public static final String MAX_CONNECTIONS_PER_IP_OVERRIDES_DEFAULT = "";
     public static final String MAX_CONNECTIONS_PER_IP_OVERRIDES_DOC = "A comma-separated list of per-ip or hostname overrides to the default maximum number of connections. " +
@@ -186,6 +193,7 @@ public class SocketServerConfigs {
             .define(SOCKET_RECEIVE_BUFFER_BYTES_CONFIG, INT, SOCKET_RECEIVE_BUFFER_BYTES_DEFAULT, HIGH, SOCKET_RECEIVE_BUFFER_BYTES_DOC)
             .define(SOCKET_REQUEST_MAX_BYTES_CONFIG, INT, SOCKET_REQUEST_MAX_BYTES_DEFAULT, atLeast(1), HIGH, SOCKET_REQUEST_MAX_BYTES_DOC)
             .define(SOCKET_LISTEN_BACKLOG_SIZE_CONFIG, INT, SOCKET_LISTEN_BACKLOG_SIZE_DEFAULT, atLeast(1), MEDIUM, SOCKET_LISTEN_BACKLOG_SIZE_DOC)
+            .define(SOCKET_IO_MODE_CONFIG, STRING, SOCKET_IO_MODE_DEFAULT, in("nio", "io_uring"), MEDIUM, SOCKET_IO_MODE_DOC)
             .define(MAX_CONNECTIONS_PER_IP_CONFIG, INT, MAX_CONNECTIONS_PER_IP_DEFAULT, atLeast(0), MEDIUM, MAX_CONNECTIONS_PER_IP_DOC)
             .define(MAX_CONNECTIONS_PER_IP_OVERRIDES_CONFIG, STRING, MAX_CONNECTIONS_PER_IP_OVERRIDES_DEFAULT, MEDIUM, MAX_CONNECTIONS_PER_IP_OVERRIDES_DOC)
             .define(MAX_CONNECTIONS_CONFIG, INT, MAX_CONNECTIONS_DEFAULT, atLeast(0), MEDIUM, MAX_CONNECTIONS_DOC)

@@ -69,7 +69,7 @@ public class SslChannelBuilder implements ChannelBuilder, ListenerReconfigurable
                 sslPrincipalMapper = SslPrincipalMapper.fromRules(sslPrincipalMappingRules);
             this.sslFactory = new SslFactory(connectionMode, null, isInterBrokerListener);
             this.sslFactory.configure(this.configs);
-            this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.valueOf(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
+            this.isKernelOffloadEnabled = Boolean.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG).toString());
         } catch (KafkaException e) {
             throw e;
         } catch (Exception e) {
@@ -89,7 +89,7 @@ public class SslChannelBuilder implements ChannelBuilder, ListenerReconfigurable
 
     @Override
     public void reconfigure(Map<String, ?> configs) {
-        this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.valueOf(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
+        this.isKernelOffloadEnabled = Boolean.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG).toString());
         sslFactory.reconfigure(configs);
     }
 

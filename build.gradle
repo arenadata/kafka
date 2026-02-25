@@ -1549,6 +1549,8 @@ project(':clients') {
     implementation libs.opentelemetryProto
     implementation libs.protobuf
     implementation libs.ktls
+    implementation libs.nettyIoUring
+    runtimeOnly libs.nettyIoUringLinuxX86_64
 
     // libraries which should be added as runtime dependencies in generated pom.xml should be defined here:
     shadowed libs.zstd

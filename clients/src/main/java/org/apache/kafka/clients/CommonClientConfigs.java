@@ -147,6 +147,12 @@ public class CommonClientConfigs {
         "a randomization factor of 0.2 will be applied to the timeout resulting in a random range between 20% below and 20% above the computed value.";
     public static final Long DEFAULT_SOCKET_CONNECTION_SETUP_TIMEOUT_MAX_MS = 30 * 1000L;
 
+    public static final String SOCKET_IO_MODE_CONFIG = "socket.io.mode";
+    public static final String SOCKET_IO_MODE_DOC = "The I/O mode for network connections. Use 'nio' for standard Java NIO (default), "
+        + "or 'io_uring' for Linux io_uring-based I/O which can provide better performance on Linux 5.1+ kernels. "
+        + "If 'io_uring' is selected but not available (non-Linux or missing native library), falls back to 'nio' with a warning.";
+    public static final String DEFAULT_SOCKET_IO_MODE = "nio";
+
     public static final String CONNECTIONS_MAX_IDLE_MS_CONFIG = "connections.max.idle.ms";
     public static final String CONNECTIONS_MAX_IDLE_MS_DOC = "Close idle connections after the number of milliseconds specified by this config.";
 

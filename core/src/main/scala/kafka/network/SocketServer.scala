@@ -39,6 +39,7 @@ import org.apache.kafka.common.metrics._
 import org.apache.kafka.common.metrics.stats.{Avg, CumulativeSum, Meter, Rate}
 import org.apache.kafka.common.network.KafkaChannel.ChannelMuteEvent
 import org.apache.kafka.common.network.{ChannelBuilder, ChannelBuilders, ClientInformation, KafkaChannel, ListenerName, ListenerReconfigurable, NetworkSend, Selectable, Send, Selector => KSelector}
+import org.apache.kafka.common.network.iouring.{IoUring, IoUringChannelBuilder, IoUringSelector}
 import org.apache.kafka.common.protocol.ApiKeys
 import org.apache.kafka.common.requests.{ApiVersionsRequest, RequestContext, RequestHeader}
 import org.apache.kafka.common.security.auth.SecurityProtocol
@@ -963,7 +964,8 @@ private[kafka] class Processor(
   private val expiredConnectionsKilledCountMetricName = metrics.metricName("expired-connections-killed-count", MetricsGroup, metricTags)
   metrics.addMetric(expiredConnectionsKilledCountMetricName, expiredConnectionsKilledCount)
 
-  private[network] val selector = createSelector(
+  private[network] val ioUringSelector: IoUringSelector = createIoUringSelector()
+  private[network] val nioSelector: KSelector = if (ioUringSelector != null) null else createNioSelector(
     ChannelBuilders.serverChannelBuilder(
       listenerName,
       listenerName == config.interBrokerListenerName,
@@ -977,8 +979,76 @@ private[kafka] class Processor(
     )
   )
 
+  // The active selector: either io_uring or NIO
+  private[network] val selector: Selectable = if (ioUringSelector != null) ioUringSelector else nioSelector
+  private[network] val useIoUring: Boolean = ioUringSelector != null
+
+  private def createIoUringSelector(): IoUringSelector = {
+    val ioMode = config.socketIoMode
+    if ("io_uring" == ioMode) {
+      if (IoUring.isAvailable) {
+        try {
+          // SSL-capable builder for inbound accepted connections (same as NIO path uses).
+          // SslTransportLayer reads/writes through the NIO SocketChannel stored in the key;
+          // io_uring is used only for readiness polling (POLLIN/POLLOUT).
+          val serverChannelBuilder = ChannelBuilders.serverChannelBuilder(
+            listenerName,
+            listenerName == config.interBrokerListenerName,
+            securityProtocol,
+            config,
+            credentialProvider.credentialCache,
+            credentialProvider.tokenCache,
+            time,
+            logContext,
+            version => apiVersionManager.apiVersionResponse(throttleTimeMs = 0, version < 4)
+          )
+          serverChannelBuilder match {
+            case reconfigurable: Reconfigurable => config.addReconfigurable(reconfigurable)
+            case _ =>
+          }
+          // Plaintext io_uring builder for outbound connect() path (used by client-mode selectors).
+          val clientChannelBuilder = new IoUringChannelBuilder(listenerName, null)
+          clientChannelBuilder.configure(
+            config.valuesWithPrefixOverride(listenerName.configPrefix).asInstanceOf[java.util.Map[String, _]]
+          )
+          val sel = new IoUringSelector(
+            maxRequestSize,
+            connectionsMaxIdleMs,
+            metrics,
+            time,
+            "socket-server",
+            metricTags,
+            false,
+            true,
+            clientChannelBuilder,
+            serverChannelBuilder,
+            memoryPool,
+            logContext)
+          // Fix the chicken-and-egg: clientChannelBuilder needs the selector for performRead/Write
+          clientChannelBuilder.setSelector(sel)
+          info(s"Using io_uring selector for listener ${listenerName.value}")
+          return sel
+        } catch {
+          case e: Exception =>
+            warn(s"Failed to create io_uring selector, falling back to NIO: ${e.getMessage}", e)
+        }
+      } else {
+        warn("io_uring mode requested but not available on this platform, falling back to NIO")
+      }
+    }
+    null
+  }
+
   // Visible to override for testing
   protected[network] def createSelector(channelBuilder: ChannelBuilder): KSelector = {
+    channelBuilder match {
+      case reconfigurable: Reconfigurable => config.addReconfigurable(reconfigurable)
+      case _ =>
+    }
+    createNioSelector(channelBuilder)
+  }
+
+  private def createNioSelector(channelBuilder: ChannelBuilder): KSelector = {
     channelBuilder match {
       case reconfigurable: Reconfigurable => config.addReconfigurable(reconfigurable)
       case _ =>
@@ -1176,7 +1246,7 @@ private[kafka] class Processor(
           processChannelException(receive.source, s"Exception while processing request from ${receive.source}", e)
       }
     }
-    selector.clearCompletedReceives()
+    if (useIoUring) ioUringSelector.clearCompletedReceives() else nioSelector.clearCompletedReceives()
   }
 
   private def processCompletedSends(): Unit = {
@@ -1201,7 +1271,7 @@ private[kafka] class Processor(
           s"Exception while processing completed send to ${send.destinationId}", e)
       }
     }
-    selector.clearCompletedSends()
+    if (useIoUring) ioUringSelector.clearCompletedSends() else nioSelector.clearCompletedSends()
   }
 
   private def updateRequestMetrics(response: RequestChannel.Response): Unit = {
@@ -1227,7 +1297,7 @@ private[kafka] class Processor(
 
   private def closeExcessConnections(): Unit = {
     if (connectionQuotas.maxConnectionsExceeded(listenerName)) {
-      val channel = selector.lowestPriorityChannel()
+      val channel = if (useIoUring) null else nioSelector.lowestPriorityChannel()
       if (channel != null)
         close(channel.id)
     }
@@ -1285,7 +1355,12 @@ private[kafka] class Processor(
       val channel = newConnections.poll()
       try {
         debug(s"Processor $id listening to new connection from ${channel.socket.getRemoteSocketAddress}")
-        selector.register(connectionId(channel.socket), channel)
+        val connId = connectionId(channel.socket)
+        if (useIoUring) {
+          ioUringSelector.register(connId, channel)
+        } else {
+          nioSelector.register(connId, channel)
+        }
         connectionsProcessed += 1
       } catch {
         // We explicitly catch all exceptions and close the socket to avoid a socket leak.
@@ -1305,8 +1380,10 @@ private[kafka] class Processor(
     while (!newConnections.isEmpty) {
       newConnections.poll().close()
     }
-    selector.channels.forEach { channel =>
-      close(channel.id)
+    if (!useIoUring) {
+      nioSelector.channels.forEach { channel =>
+        close(channel.id)
+      }
     }
     selector.close()
     metricsGroup.removeMetric(IdlePercentMetricName, Map(NetworkProcessorMetricTag -> id.toString).asJava)
@@ -1338,8 +1415,13 @@ private[kafka] class Processor(
 
   // Visible for testing
   // Only methods that are safe to call on a disconnected channel should be invoked on 'openOrClosingChannel'.
-  private[network] def openOrClosingChannel(connectionId: String): Option[KafkaChannel] =
-    Option(selector.channel(connectionId)).orElse(Option(selector.closingChannel(connectionId)))
+  private[network] def openOrClosingChannel(connectionId: String): Option[KafkaChannel] = {
+    if (useIoUring) {
+      Option(ioUringSelector.channel(connectionId))
+    } else {
+      Option(nioSelector.channel(connectionId)).orElse(Option(nioSelector.closingChannel(connectionId)))
+    }
+  }
 
   // Indicate the specified channel that the specified channel mute-related event has happened so that it can change its
   // mute state.
@@ -1352,8 +1434,13 @@ private[kafka] class Processor(
   }
 
   /* For test usage */
-  private[network] def channel(connectionId: String): Option[KafkaChannel] =
-    Option(selector.channel(connectionId))
+  private[network] def channel(connectionId: String): Option[KafkaChannel] = {
+    if (useIoUring) {
+      Option(ioUringSelector.channel(connectionId))
+    } else {
+      Option(nioSelector.channel(connectionId))
+    }
+  }
 
   def start(): Unit = {
     if (!started.getAndSet(true)) {

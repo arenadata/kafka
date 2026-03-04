@@ -364,7 +364,7 @@ public abstract class SslSelectorTest extends SelectorTest {
 
             public TestSslTransportLayer(String channelId, SelectionKey key, SSLEngine sslEngine,
                                          ChannelMetadataRegistry metadataRegistry) {
-                super(channelId, key, sslEngine, metadataRegistry, SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_DEFAULT);
+                super(channelId, key, sslEngine, metadataRegistry, SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE);
                 transportLayers.put(channelId, this);
             }
 

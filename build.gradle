@@ -3584,6 +3584,7 @@ project(':connect:runtime') {
   }
 
   dependencies {
+    runtimeOnly log4jReleaseLibs
     // connect-runtime is used in tests, use `api` for modules below for backwards compatibility even though
     // applications should generally not depend on `connect-runtime`
     api project(':connect:api')

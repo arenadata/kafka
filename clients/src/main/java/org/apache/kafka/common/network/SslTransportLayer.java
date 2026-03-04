@@ -22,6 +22,7 @@ import org.apache.kafka.common.utils.ByteBufferUnmapper;
 import org.apache.kafka.common.utils.ByteUtils;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Utils;
+
 import com.linkedin.ktls.KTLSEnableFailedException;
 import com.linkedin.ktls.KernelTls;
 
@@ -96,6 +97,8 @@ public class SslTransportLayer implements TransportLayer {
     private boolean shouldAttemptKtls;
     private boolean ktlsAttempted;
     private boolean ktlsEnabled;
+    private boolean ktlsReceiveAttempted;
+    private boolean ktlsReceiveEnabled;
 
     public static SslTransportLayer create(String channelId, SelectionKey key, SSLEngine sslEngine,
                                            ChannelMetadataRegistry metadataRegistry, boolean shouldAttemptKtls) throws IOException {
@@ -574,6 +577,13 @@ public class SslTransportLayer implements TransportLayer {
         if (state == State.CLOSING) return -1;
         else if (!ready()) return 0;
 
+        if (shouldAttemptKtls && !ktlsReceiveAttempted) {
+            attemptToEnableKernelTlsReceive();
+        }
+        if (ktlsReceiveEnabled) {
+            return readKernelTLS(dst);
+        }
+
         //if we have unread decrypted data in appReadBuffer read that into dst buffer.
         int read = 0;
         if (appReadBuffer.position() > 0) {
@@ -768,13 +778,35 @@ public class SslTransportLayer implements TransportLayer {
     private void attemptToEnableKernelTls() {
         try {
             kernelTLS.enableKernelTlsForSend(sslEngine, socketChannel);
-            log.debug("Kernel TLS enabled on socket on channel {}", channelId);
+            log.debug("Kernel TLS send enabled on socket on channel {}", channelId);
             ktlsEnabled = true;
         } catch (KTLSEnableFailedException e) {
-            log.warn("Attempt to enable KTLS failed with exception, falling back to userspace encryption", e);
+            log.warn("Attempt to enable KTLS for send failed with exception, falling back to userspace encryption", e);
         } finally {
             ktlsAttempted = true;
         }
+    }
+
+    private void attemptToEnableKernelTlsReceive() {
+        try {
+            if (netReadBuffer.position() == 0 && appReadBuffer.position() == 0) {
+                kernelTLS.enableKernelTlsForReceive(sslEngine, socketChannel);
+                log.debug("Kernel TLS receive enabled on socket on channel {}", channelId);
+                ktlsReceiveEnabled = true;
+            } else {
+                log.debug("Skipping KTLS receive: buffered data present (netReadBuffer pos={}, appReadBuffer pos={}) on channel {}",
+                        netReadBuffer.position(), appReadBuffer.position(), channelId);
+            }
+        } catch (KTLSEnableFailedException e) {
+            log.warn("Attempt to enable KTLS for receive failed with exception, falling back to userspace decryption", e);
+        } finally {
+            ktlsReceiveAttempted = true;
+        }
+    }
+
+    private int readKernelTLS(ByteBuffer dst) throws IOException {
+        log.trace("Reading with Kernel TLS enabled");
+        return socketChannel.read(dst);
     }
 
     /**

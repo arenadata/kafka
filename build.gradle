@@ -3514,6 +3514,7 @@ project(':connect:runtime') {
   }
 
   dependencies {
+    runtimeOnly log4jReleaseLibs
     // connect-runtime is used in tests, use `api` for modules below for backwards compatibility even though
     // applications should generally not depend on `connect-runtime`
     api project(':connect:api')
@@ -3920,33 +3921,31 @@ def connectConfigFiles = [
 
 
 tasks.create(name: "connectReleaseTarGz", type: Tar) {
-  
+
   compression = Compression.GZIP
   archiveBaseName = "kafka-connect_${versions.baseScala}"
 
-   from(project.file("$rootDir/bin")) { 
-      include connectBinFiles
-      into "bin/" 
-    }
-    from(project.file("$rootDir/config")) { 
-      include connectConfigFiles
-      into "config/" 
-      }
-    from(project.file("$rootDir/licenses")) { into "licenses/" }
-    from "$rootDir/LICENSE-binary" rename {String filename -> filename.replace("-binary", "")}
-    from "$rootDir/NOTICE"
+  from(project.file("$rootDir/bin")) { 
+    include connectBinFiles
+    into "bin/" 
+  }
+  from(project.file("$rootDir/config")) { 
+    include connectConfigFiles
+    into "config/" 
+  }
+  from(project.file("$rootDir/licenses")) { into "licenses/" }
+  from "$rootDir/LICENSE-binary" rename {String filename -> filename.replace("-binary", "")}
+  from "$rootDir/NOTICE"
 
-    // Add runtime dependencies
-    from(configurations.runtimeClasspath) { into("libs/") }
+  // Add runtime dependencies
+  from(configurations.runtimeClasspath) { into("libs/") }
 
-    // Add Kafka Connect packages
-    connectPkgs.each { pkg ->
-        from(project(pkg).jar) { into("libs/") }
-        from(project(pkg).configurations.runtimeClasspath) { into("libs/") }
-    }
-    from(project(':log4j-appender').jar) { into("libs/") }
-    from(project(':log4j-appender').configurations.runtimeClasspath) { into("libs/") }
+  // Add Kafka Connect packages
+  connectPkgs.each { pkg ->
+    from(project(pkg).jar) { into("libs/") }
+    from(project(pkg).configurations.runtimeClasspath) { into("libs/") }
+  }
 
-    duplicatesStrategy 'exclude'
+  duplicatesStrategy 'exclude'
 
 }

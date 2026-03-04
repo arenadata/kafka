@@ -16,8 +16,6 @@
  */
 package org.apache.kafka.common.security.ssl;
 
-import com.linkedin.ktls.KernelTls;
-
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.config.SslClientAuth;
 import org.apache.kafka.common.config.SslConfigs;
@@ -28,6 +26,8 @@ import org.apache.kafka.common.network.ConnectionMode;
 import org.apache.kafka.common.security.auth.SslEngineFactory;
 import org.apache.kafka.common.utils.SecurityUtils;
 import org.apache.kafka.common.utils.Utils;
+
+import com.linkedin.ktls.KernelTls;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -142,7 +142,7 @@ public class DefaultSslEngineFactory implements SslEngineFactory {
         this.provider = (String) configs.get(SslConfigs.SSL_PROVIDER_CONFIG);
         SecurityUtils.addConfiguredSecurityProviders(this.configs);
 
-        this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.parseBoolean(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
+        this.isKernelOffloadEnabled = configs.containsKey(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG) ? Boolean.valueOf(String.valueOf(configs.get(SslConfigs.SSL_KERNEL_OFFLOAD_ENABLE_CONFIG))) : SslConfigs.DEFAULT_SSL_KERNEL_OFFLOAD_ENABLE;
         if (isKernelOffloadEnabled) {
             this.cipherSuitesWithKernelOffload = kernelTls.supportedCipherSuites();
         }

@@ -22,6 +22,10 @@ fi
 
 base_dir=$(dirname $0)
 
+if [ -z "$JAVA_HOME" ]; then
+  $(/usr/lib/ad-runtime-utils/bin/ad-runtime-utils -runtime java -config /etc/ad-runtime-utils/ads.yaml -service KAFKA_CONNECT)
+fi
+
 if [ -z "$KAFKA_LOG4J_OPTS" ]; then
     export KAFKA_LOG4J_OPTS="-Dlog4j2.configurationFile=$base_dir/../config/connect-log4j2.yaml"
 fi

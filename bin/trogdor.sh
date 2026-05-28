@@ -34,6 +34,11 @@ if [[ $# -lt 1 ]]; then
     usage
     exit 0
 fi
+
+if [ -z "$JAVA_HOME" ]; then
+  $(/usr/lib/ad-runtime-utils/bin/ad-runtime-utils -runtime java -config /etc/ad-runtime-utils/ads.yaml -service KAFKA)
+fi
+
 action="${1}"
 shift
 CLASS=""

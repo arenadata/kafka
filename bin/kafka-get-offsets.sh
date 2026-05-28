@@ -14,4 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if [ -z "$JAVA_HOME" ]; then
+  $(/usr/lib/ad-runtime-utils/bin/ad-runtime-utils -runtime java -config /etc/ad-runtime-utils/ads.yaml -service KAFKA)
+fi
+
 exec $(dirname $0)/kafka-run-class.sh org.apache.kafka.tools.GetOffsetShell "$@"

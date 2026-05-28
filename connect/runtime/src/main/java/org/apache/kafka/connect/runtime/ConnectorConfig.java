@@ -206,6 +206,19 @@ public class ConnectorConfig extends AbstractConfig {
             "and source offset will be logged. " +
             "This is 'false' by default, which will prevent record keys, values, and headers from being written to log files.";
 
+    public static final String METADATA_REPORTER_GROUP = "Metadata Reporting";
+    public static final String METADATA_REPORTER_PREFIX = "metadata.reporter.";
+    public static final String METADATA_REPORTER_CLASS_CONFIG = METADATA_REPORTER_PREFIX + "class";
+    public static final String METADATA_REPORTER_CLASS_DOC =
+            "Fully qualified class name of a "
+            + "<code>org.apache.kafka.connect.metadata.MetadataReporter</code> implementation "
+            + "that will receive metadata events (lineage, schema evolution, table creation) "
+            + "emitted by this connector. When unset, no reporter is attached. "
+            + "Additional configuration for the reporter is passed through any property "
+            + " prefixed with <code>" + METADATA_REPORTER_PREFIX + "</code> (with thhe prefix stripped).";
+    public static final String METADATA_REPORTER_CLASS_DEFAULT = null;
+    private static final String METADATA_REPORTER_CLASS_DISPLAY = "Metadata reporter class";
+
 
     public static final String CONNECTOR_CLIENT_PRODUCER_OVERRIDES_PREFIX = "producer.override.";
     public static final String CONNECTOR_CLIENT_CONSUMER_OVERRIDES_PREFIX = "consumer.override.";
@@ -264,7 +277,9 @@ public class ConnectorConfig extends AbstractConfig {
                 .define(ERRORS_LOG_ENABLE_CONFIG, Type.BOOLEAN, ERRORS_LOG_ENABLE_DEFAULT, Importance.MEDIUM,
                         ERRORS_LOG_ENABLE_DOC, ERROR_GROUP, ++orderInErrorGroup, Width.SHORT, ERRORS_LOG_ENABLE_DISPLAY)
                 .define(ERRORS_LOG_INCLUDE_MESSAGES_CONFIG, Type.BOOLEAN, ERRORS_LOG_INCLUDE_MESSAGES_DEFAULT, Importance.MEDIUM,
-                        ERRORS_LOG_INCLUDE_MESSAGES_DOC, ERROR_GROUP, ++orderInErrorGroup, Width.SHORT, ERRORS_LOG_INCLUDE_MESSAGES_DISPLAY);
+                        ERRORS_LOG_INCLUDE_MESSAGES_DOC, ERROR_GROUP, ++orderInErrorGroup, Width.SHORT, ERRORS_LOG_INCLUDE_MESSAGES_DISPLAY)
+                .define(METADATA_REPORTER_CLASS_CONFIG, Type.STRING, METADATA_REPORTER_CLASS_DEFAULT, Importance.MEDIUM,
+                        METADATA_REPORTER_CLASS_DOC, METADATA_REPORTER_GROUP, 1, Width.LONG, METADATA_REPORTER_CLASS_DISPLAY);
 
     }
 
@@ -342,6 +357,28 @@ public class ConnectorConfig extends AbstractConfig {
 
     public boolean enableErrorLog() {
         return getBoolean(ERRORS_LOG_ENABLE_CONFIG);
+    }
+
+    /**
+     * @return the configured metadata reporter class name or {@code null} if
+     * no reporter has been configured
+     */
+    public String metadataReporterClass() {
+        String cls = getString(METADATA_REPORTER_CLASS_CONFIG);
+        return (cls == null || cls.isEmpty()) ? null : cls;
+    }
+
+    /**
+     * @return the configuration map to pass to the reporter's
+     * {@link org.apache.kafka.common.Configurable#configure(Map)} call:
+     * all properties beginning with {@link #METADATA_REPORTER_PREFIX},
+     * with the prefix stripped, excluding {@link #METADATA_REPORTER_CLASS_CONFIG} itself.
+     */
+    public Map<String, Object> metadataReporterConfigs() {
+        Map<String, Object> scoped = originalsWithPrefix(METADATA_REPORTER_PREFIX);
+        // Remove the "class" key since it's routing config, not reporter config.
+        scoped.remove(METADATA_REPORTER_CLASS_CONFIG.substring(METADATA_REPORTER_PREFIX.length()));
+        return scoped;
     }
 
     public boolean includeRecordDetailsInErrorLog() {

@@ -482,6 +482,7 @@
     <allow pkg="org.apache.kafka.connect.errors" />
     <allow pkg="org.apache.kafka.connect.header" />
     <allow pkg="org.apache.kafka.connect.components"/>
+    <allow pkg="org.apache.kafka.connect.metadata"/>
     <allow pkg="org.apache.kafka.clients" />
     <allow pkg="org.apache.kafka.test"/>
     <!-- for testing -->
@@ -651,6 +652,13 @@
       <allow class="org.apache.kafka.connect.sink.SinkRecord" />
       <allow pkg="org.apache.kafka.connect.transforms.util" />
       <allow pkg="org.apache.kafka.connect.transforms.field" />
+    </subpackage>
+
+    <subpackage name="openmetadata">
+      <allow pkg="com.fasterxml.jackson" />
+      <allow pkg="org.apache.kafka.connect.openmetadata.model"/>
+      <!-- for testing -->
+      <allow pkg="com.sun.net.httpserver" />
     </subpackage>
   </subpackage>
 

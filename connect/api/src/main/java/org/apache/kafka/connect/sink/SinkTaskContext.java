@@ -18,6 +18,7 @@ package org.apache.kafka.connect.sink;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.metrics.PluginMetrics;
+import org.apache.kafka.connect.metadata.MetadataReporter;
 
 import java.util.Map;
 import java.util.Set;
@@ -121,6 +122,34 @@ public interface SinkTaskContext {
      * @since 2.6
      */
     default ErrantRecordReporter errantRecordReporter() {
+        return null;
+    }
+
+    /**
+     * Get the reporter that the sink task can use to publish metadata events
+     * (lineage, table creation, schema evolution) to an external catalog.
+     * <p>
+     * Returns {@code null} if no reporter is configured for the connector.
+     * <p>
+     * This method was added in Apache Kafka 4.2. Sink tasks that use this method
+     * but want to maintain backward compatibility so they can also be deployed to
+     * older Connect runtimes should guard the call with a try-catch block, since
+     * calling this method will result in a {@link NoSuchMethodError} or
+     * {@link NoClassDefFoundError} when the sink connector is deployed to
+     * Connect runtimes older than Kafka 4.2. For example:
+     * <pre>
+     *     MetadataReporter reporter;
+     *     try {
+     *         reporter = context.metadataReporter();
+     *     } catch (NoSuchMethodError | NoClassDefFoundError e) {
+     *         reporter = null;
+     *     }
+     * </pre>
+     *
+     * @return the reporter; {@code null} if no metadata reporter has been configured
+     * @since 4.2
+     */
+    default MetadataReporter metadataReporter() {
         return null;
     }
 

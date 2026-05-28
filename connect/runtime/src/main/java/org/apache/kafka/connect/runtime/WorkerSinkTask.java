@@ -48,6 +48,7 @@ import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperator;
 import org.apache.kafka.connect.runtime.errors.Stage;
 import org.apache.kafka.connect.runtime.errors.WorkerErrantRecordReporter;
 import org.apache.kafka.connect.runtime.isolation.LoaderSwap;
+import org.apache.kafka.connect.runtime.metadata.WorkerMetadataReporter;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
 import org.apache.kafka.connect.storage.ClusterConfigState;
@@ -105,6 +106,7 @@ class WorkerSinkTask extends WorkerTask<ConsumerRecord<byte[], byte[]>, SinkReco
     private boolean taskStopped;
     private final WorkerErrantRecordReporter workerErrantRecordReporter;
     private final String version;
+    private final WorkerMetadataReporter workerMetadataReporter;
 
     public WorkerSinkTask(ConnectorTaskId id,
                           SinkTask task,
@@ -123,6 +125,7 @@ class WorkerSinkTask extends WorkerTask<ConsumerRecord<byte[], byte[]>, SinkReco
                           Time time,
                           RetryWithToleranceOperator<ConsumerRecord<byte[], byte[]>> retryWithToleranceOperator,
                           WorkerErrantRecordReporter workerErrantRecordReporter,
+                          WorkerMetadataReporter workerMetadataReporter,
                           StatusBackingStore statusBackingStore,
                           Supplier<List<ErrorReporter<ConsumerRecord<byte[], byte[]>>>> errorReportersSupplier,
                           TaskPluginsMetadata pluginsMetadata,
@@ -154,6 +157,7 @@ class WorkerSinkTask extends WorkerTask<ConsumerRecord<byte[], byte[]>, SinkReco
         this.isTopicTrackingEnabled = workerConfig.getBoolean(TOPIC_TRACKING_ENABLE_CONFIG);
         this.taskStopped = false;
         this.workerErrantRecordReporter = workerErrantRecordReporter;
+        this.workerMetadataReporter = workerMetadataReporter;
         this.version = task.version();
     }
 
@@ -161,7 +165,7 @@ class WorkerSinkTask extends WorkerTask<ConsumerRecord<byte[], byte[]>, SinkReco
     public void initialize(TaskConfig taskConfig) {
         try {
             this.taskConfig = taskConfig.originalsStrings();
-            this.context = new WorkerSinkTaskContext(consumer, this, configState);
+            this.context = new WorkerSinkTaskContext(consumer, this, configState, workerMetadataReporter);
         } catch (Throwable t) {
             log.error("{} Task failed initialization and will not be started.", this, t);
             onFailure(t);
@@ -190,6 +194,14 @@ class WorkerSinkTask extends WorkerTask<ConsumerRecord<byte[], byte[]>, SinkReco
         Utils.closeQuietly(keyConverterPlugin, "key converter");
         Utils.closeQuietly(valueConverterPlugin, "value converter");
         Utils.closeQuietly(pluginMetrics, "plugin metrics");
+        if (workerMetadataReporter != null) {
+            try {
+                workerMetadataReporter.flush();
+            } catch (Throwable t) {
+                log.warn("{} Failed to flush metadata reporter during shutdown", this, t);
+            }
+            Utils.closeQuietly(workerMetadataReporter, "metadata reporter for " + id);
+        }
         /*
             Setting partition count explicitly to 0 to handle the case,
             when the task fails, which would cause its consumer to leave the group.
@@ -607,6 +619,10 @@ class WorkerSinkTask extends WorkerTask<ConsumerRecord<byte[], byte[]>, SinkReco
 
     protected WorkerErrantRecordReporter workerErrantRecordReporter() {
         return workerErrantRecordReporter;
+    }
+
+    protected WorkerMetadataReporter workerMetadataReporter() {
+        return workerMetadataReporter;
     }
 
     private void resumeAll() {

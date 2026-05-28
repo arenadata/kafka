@@ -466,6 +466,18 @@ For a detailed description of spotbugs bug categories, see https://spotbugs.read
         <Package name="org.apache.kafka.streams.examples.pageview"/>
         <Bug pattern="UWF_UNWRITTEN_PUBLIC_OR_PROTECTED_FIELD"/>
     </Match>
+    <Match>
+        <Package name="org.apache.kafka.connect.openmetadata.model"/>
+        <Bug pattern="NP_UNWRITTEN_PUBLIC_OR_PROTECTED_FIELD"/>
+    </Match>
+    <Match>
+        <Package name="org.apache.kafka.connect.openmetadata.model"/>
+        <Bug pattern="URF_UNREAD_PUBLIC_OR_PROTECTED_FIELD"/>
+    </Match>
+    <Match>
+        <Package name="org.apache.kafka.connect.openmetadata.model"/>
+        <Bug pattern="UWF_UNWRITTEN_PUBLIC_OR_PROTECTED_FIELD"/>
+    </Match>
 
     <!-- END Suppress warnings for unused members that are undetectably used by Jackson -->
 

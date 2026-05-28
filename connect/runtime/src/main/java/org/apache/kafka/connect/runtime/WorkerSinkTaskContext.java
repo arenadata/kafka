@@ -20,6 +20,8 @@ import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.metrics.PluginMetrics;
 import org.apache.kafka.connect.errors.IllegalWorkerStateException;
+import org.apache.kafka.connect.metadata.MetadataReporter;
+import org.apache.kafka.connect.runtime.metadata.WorkerMetadataReporter;
 import org.apache.kafka.connect.sink.ErrantRecordReporter;
 import org.apache.kafka.connect.sink.SinkTaskContext;
 import org.apache.kafka.connect.storage.ClusterConfigState;
@@ -44,16 +46,19 @@ public class WorkerSinkTaskContext implements SinkTaskContext {
     private final Set<TopicPartition> pausedPartitions;
     private long timeoutMs;
     private boolean commitRequested;
+    private final WorkerMetadataReporter metadataReporter;
 
     public WorkerSinkTaskContext(Consumer<byte[], byte[]> consumer,
                                  WorkerSinkTask sinkTask,
-                                 ClusterConfigState configState) {
+                                 ClusterConfigState configState,
+                                 WorkerMetadataReporter metadataReporter) {
         this.offsets = new HashMap<>();
         this.timeoutMs = -1L;
         this.consumer = consumer;
         this.sinkTask = sinkTask;
         this.configState = configState;
         this.pausedPartitions = new HashSet<>();
+        this.metadataReporter = metadataReporter;
     }
 
     @Override
@@ -165,6 +170,11 @@ public class WorkerSinkTaskContext implements SinkTaskContext {
     @Override
     public ErrantRecordReporter errantRecordReporter() {
         return sinkTask.workerErrantRecordReporter();
+    }
+
+    @Override
+    public MetadataReporter metadataReporter() {
+        return metadataReporter;
     }
 
     @Override

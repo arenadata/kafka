@@ -44,6 +44,7 @@ import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperator;
 import org.apache.kafka.connect.runtime.errors.Stage;
 import org.apache.kafka.connect.runtime.errors.ToleranceType;
 import org.apache.kafka.connect.runtime.isolation.LoaderSwap;
+import org.apache.kafka.connect.runtime.metadata.WorkerMetadataReporter;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.kafka.connect.source.SourceTask;
 import org.apache.kafka.connect.source.SourceTaskContext;
@@ -191,6 +192,7 @@ public abstract class AbstractWorkerSourceTask extends WorkerTask<SourceRecord, 
     protected final ConnectorOffsetBackingStore offsetStore;
     protected final OffsetStorageWriter offsetWriter;
     protected final Producer<byte[], byte[]> producer;
+    protected final WorkerMetadataReporter workerMetadataReporter;
 
     private final SourceTask task;
     private final Plugin<Converter> keyConverterPlugin;
@@ -237,6 +239,7 @@ public abstract class AbstractWorkerSourceTask extends WorkerTask<SourceRecord, 
                                        StatusBackingStore statusBackingStore,
                                        Executor closeExecutor,
                                        Supplier<List<ErrorReporter<SourceRecord>>> errorReportersSupplier,
+                                       WorkerMetadataReporter workerMetadataReporter,
                                        TaskPluginsMetadata pluginsMetadata,
                                        Function<ClassLoader, LoaderSwap> pluginLoaderSwapper) {
 
@@ -255,7 +258,8 @@ public abstract class AbstractWorkerSourceTask extends WorkerTask<SourceRecord, 
         this.offsetWriter = offsetWriter;
         this.offsetStore = Objects.requireNonNull(offsetStore, "offset store cannot be null for source tasks");
         this.closeExecutor = closeExecutor;
-        this.sourceTaskContext = new WorkerSourceTaskContext(offsetReader, id, configState, workerTransactionContext, pluginMetrics);
+        this.workerMetadataReporter = workerMetadataReporter;
+        this.sourceTaskContext = new WorkerSourceTaskContext(offsetReader, id, configState, workerTransactionContext, pluginMetrics, workerMetadataReporter);
         this.stopRequestedLatch = new CountDownLatch(1);
         this.sourceTaskMetricsGroup = new SourceTaskMetricsGroup(id, connectMetrics);
         this.topicTrackingEnabled = workerConfig.getBoolean(TOPIC_TRACKING_ENABLE_CONFIG);
@@ -326,6 +330,14 @@ public abstract class AbstractWorkerSourceTask extends WorkerTask<SourceRecord, 
 
         if (admin != null) {
             Utils.closeQuietly(() -> admin.close(Duration.ofSeconds(30)), "source task admin");
+        }
+        if (workerMetadataReporter != null) {
+            try {
+                workerMetadataReporter.flush();
+            } catch (Throwable t) {
+                log.warn("{} Failed to flush metadata reporter during shutdown", this, t);
+            }
+            Utils.closeQuietly(workerMetadataReporter, "metadata reporter for " + id);
         }
         Utils.closeQuietly(offsetReader, "offset reader");
         Utils.closeQuietly(offsetStore::stop, "offset backing store");

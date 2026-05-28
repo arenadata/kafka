@@ -434,7 +434,7 @@ public class ErrorHandlingTaskTest {
             taskId, sinkTask, statusListener, initialState, workerConfig,
             ClusterConfigState.EMPTY, metrics, keyConverterPlugin, valueConverterPlugin, errorHandlingMetrics,
                 headerConverterPlugin, sinkTransforms, consumer, pluginLoader, time,
-            retryWithToleranceOperator, workerErrantRecordReporter,
+            retryWithToleranceOperator, workerErrantRecordReporter, null,
                 statusBackingStore, () -> errorReporters, null, TestPlugins.noOpLoaderSwap());
     }
 
@@ -474,7 +474,7 @@ public class ErrorHandlingTaskTest {
                 offsetReader, offsetWriter, offsetStore, workerConfig,
                 ClusterConfigState.EMPTY, metrics, pluginLoader, time,
                 retryWithToleranceOperator,
-                statusBackingStore, Runnable::run, () -> errorReporters, null, TestPlugins.noOpLoaderSwap()));
+                statusBackingStore, Runnable::run, () -> errorReporters, null, null, TestPlugins.noOpLoaderSwap()));
 
     }
 

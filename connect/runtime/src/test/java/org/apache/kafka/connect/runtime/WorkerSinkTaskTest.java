@@ -226,7 +226,7 @@ public class WorkerSinkTaskTest {
                 taskId, task, statusListener, initialState, workerConfig, ClusterConfigState.EMPTY, connectMetrics,
                 keyConverterPlugin, valueConverterPlugin, errorMetrics, headerConverterPlugin,
                 transformationChain, consumer, loader, time,
-                retryWithToleranceOperator, null, statusBackingStore, errorReportersSupplier, null, TestPlugins.noOpLoaderSwap());
+                retryWithToleranceOperator, null, null, statusBackingStore, errorReportersSupplier, null, TestPlugins.noOpLoaderSwap());
     }
 
     @AfterEach

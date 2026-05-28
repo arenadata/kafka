@@ -58,6 +58,7 @@ import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.health.ConnectorType;
 import org.apache.kafka.connect.json.JsonConverter;
 import org.apache.kafka.connect.json.JsonConverterConfig;
+import org.apache.kafka.connect.metadata.MetadataReporter;
 import org.apache.kafka.connect.runtime.ConnectMetrics.MetricGroup;
 import org.apache.kafka.connect.runtime.distributed.DistributedConfig;
 import org.apache.kafka.connect.runtime.errors.DeadLetterQueueReporter;
@@ -71,6 +72,7 @@ import org.apache.kafka.connect.runtime.isolation.PluginUtils;
 import org.apache.kafka.connect.runtime.isolation.Plugins;
 import org.apache.kafka.connect.runtime.isolation.Plugins.ClassLoaderUsage;
 import org.apache.kafka.connect.runtime.isolation.VersionedPluginLoadingException;
+import org.apache.kafka.connect.runtime.metadata.WorkerMetadataReporter;
 import org.apache.kafka.connect.runtime.rest.RestServer;
 import org.apache.kafka.connect.runtime.rest.entities.ConnectorOffset;
 import org.apache.kafka.connect.runtime.rest.entities.ConnectorOffsets;
@@ -1066,6 +1068,42 @@ public final class Worker {
         return null;
     }
 
+    private WorkerMetadataReporter createWorkerMetadataReporter(
+            ConnectorTaskId taskId,
+            ConnectorConfig connConfig,
+            ClassLoader connectorLoader) {
+        String reporterClass = connConfig.metadataReporterClass();
+        if (reporterClass == null) {
+            return null;
+        }
+
+        Object raw;
+        try {
+            raw = plugins.newPlugin(reporterClass, null);
+        } catch (Throwable t) {
+            throw new ConnectException("Failed to load metadata reporter class '" + reporterClass + "' for " + taskId, t);
+        }
+        if (!(raw instanceof MetadataReporter)) {
+            Utils.closeQuietly((raw instanceof AutoCloseable) ? (AutoCloseable) raw : null, "metadata reporter");
+            throw new ConnectException("Coonfigured metadata reporter class '" + reporterClass + "' is not an instance of "
+            + MetadataReporter.class.getName() + " (got " + raw.getClass().getName() + ")");
+        }
+        MetadataReporter reporter = (MetadataReporter) raw;
+
+        try (LoaderSwap ignored = plugins.withClassLoader(reporter.getClass().getClassLoader())) {
+            reporter.configure(connConfig.metadataReporterConfigs());
+        } catch (Throwable t) {
+            Utils.closeQuietly(reporter, "metadata reporter");
+            throw new ConnectException("Failed to configure metadata reporter '" + reporterClass + "' for " + taskId, t);
+        }
+
+        return new WorkerMetadataReporter(
+                taskId,
+                reporter,
+                reporter.getClass().getClassLoader(),
+                plugins.safeLoaderSwapper());
+    }
+
     private void stopTask(ConnectorTaskId taskId) {
         try (LoggingContext loggingContext = LoggingContext.forTask(taskId)) {
             WorkerTask<?, ?> task = tasks.get(taskId);
@@ -1911,6 +1949,8 @@ public final class Worker {
             WorkerErrantRecordReporter workerErrantRecordReporter = createWorkerErrantRecordReporter(sinkConfig, retryWithToleranceOperator,
                     keyConverterPlugin.get(), valueConverterPlugin.get(), headerConverterPlugin.get());
 
+            WorkerMetadataReporter workerMetadataReporter = createWorkerMetadataReporter(id, connectorConfig, classLoader);
+
             Map<String, Object> consumerProps = baseConsumerConfigs(
                     id.connector(),  "connector-consumer-" + id, config, connectorConfig, connectorClass,
                     connectorClientConfigOverridePolicy, kafkaClusterId, ConnectorType.SINK);
@@ -1918,7 +1958,7 @@ public final class Worker {
 
             return new WorkerSinkTask(id, (SinkTask) task, statusListener, initialState, config, configState, metrics, keyConverterPlugin,
                     valueConverterPlugin, errorHandlingMetrics, headerConverterPlugin, transformationChain, consumer, classLoader, time,
-                    retryWithToleranceOperator, workerErrantRecordReporter, herder.statusBackingStore(),
+                    retryWithToleranceOperator, workerErrantRecordReporter, workerMetadataReporter, herder.statusBackingStore(),
                     () -> sinkTaskReporters(id, sinkConfig, errorHandlingMetrics, connectorClass), taskPluginsMetadata, plugins.safeLoaderSwapper());
         }
     }
@@ -1956,6 +1996,8 @@ public final class Worker {
                     connectorClientConfigOverridePolicy, kafkaClusterId);
             KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProps);
 
+            WorkerMetadataReporter workerMetadataReporter = createWorkerMetadataReporter(id, connectorConfig, classLoader);
+
             TopicAdmin topicAdmin = null;
             final boolean topicCreationEnabled = sourceConnectorTopicCreationEnabled(sourceConfig);
             if (topicCreationEnabled || regularSourceTaskUsesConnectorSpecificOffsetsStore(sourceConfig)) {
@@ -1980,7 +2022,7 @@ public final class Worker {
             return new WorkerSourceTask(id, (SourceTask) task, statusListener, initialState, keyConverterPlugin, valueConverterPlugin, errorHandlingMetrics,
                     headerConverterPlugin, transformationChain, producer, topicAdmin, topicCreationGroups,
                     offsetReader, offsetWriter, offsetStore, config, configState, metrics, classLoader, time,
-                    retryWithToleranceOperator, herder.statusBackingStore(), executor, () -> sourceTaskReporters(id, sourceConfig, errorHandlingMetrics), pluginsMetadata, plugins.safeLoaderSwapper());
+                    retryWithToleranceOperator, herder.statusBackingStore(), executor, () -> sourceTaskReporters(id, sourceConfig, errorHandlingMetrics), workerMetadataReporter, pluginsMetadata, plugins.safeLoaderSwapper());
         }
     }
 
@@ -2024,6 +2066,8 @@ public final class Worker {
                     connectorClientConfigOverridePolicy, kafkaClusterId);
             KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProps);
 
+            WorkerMetadataReporter workerMetadataReporter = createWorkerMetadataReporter(id, connectorConfig, classLoader);
+
             // Create a topic admin that the task will use for its offsets topic and, potentially, automatic topic creation
             Map<String, Object> adminOverrides = adminConfigs(id.connector(), "connector-adminclient-" + id, config,
                     sourceConfig, connectorClass, connectorClientConfigOverridePolicy, kafkaClusterId, ConnectorType.SOURCE);
@@ -2046,7 +2090,7 @@ public final class Worker {
                     headerConverterPlugin, transformationChain, producer, topicAdmin, topicCreationGroups,
                     offsetReader, offsetWriter, offsetStore, config, configState, metrics, errorHandlingMetrics, classLoader, time, retryWithToleranceOperator,
                     herder.statusBackingStore(), sourceConfig, executor, preProducerCheck, postProducerCheck,
-                    () -> sourceTaskReporters(id, sourceConfig, errorHandlingMetrics), pluginsMetadata, plugins.safeLoaderSwapper());
+                    () -> sourceTaskReporters(id, sourceConfig, errorHandlingMetrics), workerMetadataReporter, pluginsMetadata, plugins.safeLoaderSwapper());
         }
     }
 

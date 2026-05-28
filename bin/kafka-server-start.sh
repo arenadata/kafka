@@ -29,6 +29,10 @@ if [ "x$KAFKA_HEAP_OPTS" = "x" ]; then
     export KAFKA_HEAP_OPTS="-Xmx1G -Xms1G"
 fi
 
+if [ -z "$JAVA_HOME" ]; then
+  $(/usr/lib/ad-runtime-utils/bin/ad-runtime-utils -runtime java -config /etc/ad-runtime-utils/ads.yaml -service KAFKA)
+fi
+
 EXTRA_ARGS=${EXTRA_ARGS-'-name kafkaServer -loggc'}
 
 COMMAND=$1

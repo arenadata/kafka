@@ -487,10 +487,8 @@ public final class QuorumController implements Controller {
                         throw new InvalidRequestException("Invalid broker name " +
                             configResource.name());
                     }
-                    if (!(clusterControl.brokerRegistrations().containsKey(nodeId) ||
-                            featureControl.isControllerId(nodeId))) {
-                        throw new BrokerIdNotRegisteredException("No node with id " +
-                            nodeId + " found.");
+                    if (!isNodeIdRegistered(nodeId)) {
+                        throw new BrokerIdNotRegisteredException("No node with id " + nodeId + " found.");
                     }
                     break;
                 case TOPIC:
@@ -502,6 +500,19 @@ public final class QuorumController implements Controller {
                 default:
                     break;
             }
+        }
+
+        /**
+         * Checks if a node id is registered as a broker, controller in static/dynamic quorum.
+         */
+        private boolean isNodeIdRegistered(int nodeId) {
+            if (clusterControl.brokerRegistrations().containsKey(nodeId)) {
+                return true;
+            }
+            if (featureControl.isControllerId(nodeId)) {
+                return true;
+            }
+            return clusterControl.controllerRegistrations().containsKey(nodeId);
         }
     }
 
@@ -629,7 +640,7 @@ public final class QuorumController implements Controller {
         }
     }
 
-    void appendControlEvent(String name, Runnable handler) {
+    public void appendControlEvent(String name, Runnable handler) {
         ControllerEvent event = new ControllerEvent(name, handler);
         queue.append(event);
     }
@@ -1060,6 +1071,11 @@ public final class QuorumController implements Controller {
                     reader.close();
                 }
             });
+        }
+
+        @Override
+        public void handleLoadBootstrap(SnapshotReader<ApiMessageAndVersion> reader) {
+            reader.close();
         }
 
         @Override
@@ -1772,13 +1788,14 @@ public final class QuorumController implements Controller {
     @Override
     public CompletableFuture<CreateTopicsResponseData> createTopics(
         ControllerRequestContext context,
-        CreateTopicsRequestData request, Set<String> describable
+        CreateTopicsRequestData request, Set<String> describable,
+        boolean forwarded
     ) {
         if (request.topics().isEmpty()) {
             return CompletableFuture.completedFuture(new CreateTopicsResponseData());
         }
         return appendWriteEvent("createTopics", context.deadlineNs(),
-            () -> replicationControl.createTopics(context, request, describable));
+            () -> replicationControl.createTopics(context, request, describable, forwarded));
     }
 
     @Override
@@ -1868,14 +1885,15 @@ public final class QuorumController implements Controller {
     public CompletableFuture<Map<ConfigResource, ApiError>> incrementalAlterConfigs(
         ControllerRequestContext context,
         Map<ConfigResource, Map<String, Entry<OpType, String>>> configChanges,
-        boolean validateOnly
+        boolean validateOnly,
+        boolean forwarded
     ) {
         if (configChanges.isEmpty()) {
             return CompletableFuture.completedFuture(Map.of());
         }
         return appendWriteEvent("incrementalAlterConfigs", context.deadlineNs(), () -> {
             ControllerResult<Map<ConfigResource, ApiError>> result =
-                configurationControl.incrementalAlterConfigs(configChanges, false);
+                configurationControl.incrementalAlterConfigs(configChanges, false, forwarded);
             if (validateOnly) {
                 return result.withoutRecords();
             } else {
@@ -1913,14 +1931,16 @@ public final class QuorumController implements Controller {
     @Override
     public CompletableFuture<Map<ConfigResource, ApiError>> legacyAlterConfigs(
         ControllerRequestContext context,
-        Map<ConfigResource, Map<String, String>> newConfigs, boolean validateOnly
+        Map<ConfigResource, Map<String, String>> newConfigs,
+        boolean validateOnly,
+        boolean forwarded
     ) {
         if (newConfigs.isEmpty()) {
             return CompletableFuture.completedFuture(Map.of());
         }
         return appendWriteEvent("legacyAlterConfigs", context.deadlineNs(), () -> {
             ControllerResult<Map<ConfigResource, ApiError>> result =
-                configurationControl.legacyAlterConfigs(newConfigs, false);
+                configurationControl.legacyAlterConfigs(newConfigs, false, forwarded);
             if (validateOnly) {
                 return result.withoutRecords();
             } else {

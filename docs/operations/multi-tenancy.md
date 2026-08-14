@@ -96,23 +96,24 @@ Security settings for Kafka fall into three main categories, which are similar t
 
 When securing a multi-tenant Kafka environment, the most common administrative task is the third category (authorization), i.e., managing the user/client permissions that grant or deny access to certain topics and thus to the data stored by users within a cluster. This task is performed predominantly through the setting of access control lists (ACLs). Here, administrators of multi-tenant environments in particular benefit from putting a hierarchical topic naming structure in place as described in a previous section, because they can conveniently control access to topics through prefixed ACLs (`--resource-pattern-type Prefixed`). This significantly minimizes the administrative overhead of securing topics in multi-tenant environments: administrators can make their own trade-offs between higher developer convenience (more lenient permissions, using fewer and broader ACLs) vs. tighter security (more stringent permissions, using more and narrower ACLs). 
 
-In the following example, user Alice—a new member of ACME corporation's InfoSec team—is granted write permissions to all topics whose names start with "acme.infosec.", such as "acme.infosec.telemetry.logins" and "acme.infosec.syslogs.events". 
-    
-    
-    # Grant permissions to user Alice
-    $ bin/kafka-acls.sh \
-        --bootstrap-server localhost:9092 \
-        --add --allow-principal User:Alice \
-        --producer \
-        --resource-pattern-type prefixed --topic acme.infosec.
+In the following example, user Alice-a new member of ACME corporation's InfoSec team-is granted write permissions to all topics whose names start with "acme.infosec.", such as "acme.infosec.telemetry.logins" and "acme.infosec.syslogs.events". 
+
+```bash
+# Grant permissions to user Alice
+$ bin/kafka-acls.sh \
+    --bootstrap-server localhost:9092 \
+    --add --allow-principal User:Alice \
+    --producer \
+    --resource-pattern-type prefixed --topic acme.infosec.
+```
 
 You can similarly use this approach to isolate different customers on the same shared cluster. 
 
 ## Isolating Tenants: Quotas, Rate Limiting, Throttling
 
-Multi-tenant clusters should generally be configured with quotas, which protect against users (tenants) eating up too many cluster resources, such as when they attempt to write or read very high volumes of data, or create requests to brokers at an excessively high rate. This may cause network saturation, monopolize broker resources, and impact other clients—all of which you want to avoid in a shared environment. 
+Multi-tenant clusters should generally be configured with quotas, which protect against users (tenants) eating up too many cluster resources, such as when they attempt to write or read very high volumes of data, or create requests to brokers at an excessively high rate. This may cause network saturation, monopolize broker resources, and impact other clients-all of which you want to avoid in a shared environment. 
 
-**Client quotas:** Kafka supports different types of (per-user principal) client quotas. Because a client's quotas apply irrespective of which topics the client is writing to or reading from, they are a convenient and effective tool to allocate resources in a multi-tenant cluster. Request rate quotas, for example, help to limit a user's impact on broker CPU usage by limiting the time a broker spends on the [request handling path](/protocol.html) for that user, after which throttling kicks in. In many situations, isolating users with request rate quotas has a bigger impact in multi-tenant clusters than setting incoming/outgoing network bandwidth quotas, because excessive broker CPU usage for processing requests reduces the effective bandwidth the broker can serve. Furthermore, administrators can also define quotas on topic operations—such as create, delete, and alter—to prevent Kafka clusters from being overwhelmed by highly concurrent topic operations (see [KIP-599](https://cwiki.apache.org/confluence/x/6DLcC) and the quota type `controller_mutation_rate`). 
+**Client quotas:** Kafka supports different types of (per-user principal) client quotas. Because a client's quotas apply irrespective of which topics the client is writing to or reading from, they are a convenient and effective tool to allocate resources in a multi-tenant cluster. Request rate quotas, for example, help to limit a user's impact on broker CPU usage by limiting the time a broker spends on the [request handling path](/protocol.html) for that user, after which throttling kicks in. In many situations, isolating users with request rate quotas has a bigger impact in multi-tenant clusters than setting incoming/outgoing network bandwidth quotas, because excessive broker CPU usage for processing requests reduces the effective bandwidth the broker can serve. Furthermore, administrators can also define quotas on topic operations-such as create, delete, and alter-to prevent Kafka clusters from being overwhelmed by highly concurrent topic operations (see [KIP-599](https://cwiki.apache.org/confluence/x/6DLcC) and the quota type `controller_mutation_rate`). 
 
 **Server quotas:** Kafka also supports different types of broker-side quotas. For example, administrators can set a limit on the rate with which the broker accepts new connections, set the maximum number of connections per broker, or set the maximum number of connections allowed from a specific IP address. 
 

@@ -46,8 +46,8 @@ import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Meter;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.internal.MemoryRecords;
+import org.apache.kafka.common.record.internal.RecordBatch;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.FindCoordinatorRequest;
 import org.apache.kafka.common.requests.ProduceRequest;
@@ -80,7 +80,7 @@ public class Sender implements Runnable {
 
     private final Logger log;
 
-    /* the state of each nodes connection */
+    /* the client for sending requests to the Kafka cluster */
     private final KafkaClient client;
 
     /* the record accumulator that batches records */
@@ -367,7 +367,8 @@ public class Sender implements Runnable {
             log.trace("Expired {} batches in accumulator", expiredBatches.size());
         for (ProducerBatch expiredBatch : expiredBatches) {
             String errorMessage = "Expiring " + expiredBatch.recordCount + " record(s) for " + expiredBatch.topicPartition
-                    + ":" + (now - expiredBatch.createdMs) + " ms has passed since batch creation";
+                + ":" + (now - expiredBatch.createdMs) + " ms has passed since batch creation. "
+                + "The request has not been sent, or no server response has been received yet.";
             failBatch(expiredBatch, new TimeoutException(errorMessage), false, deallocateBuffer);
             if (transactionManager != null && expiredBatch.inRetry()) {
                 // This ensures that no new batches are drained until the current in flight batches are fully resolved.

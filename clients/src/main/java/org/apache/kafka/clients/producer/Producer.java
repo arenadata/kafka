@@ -66,12 +66,12 @@ public interface Producer<K, V> extends Closeable {
     void abortTransaction() throws ProducerFencedException;
 
     /**
-     * @see KafkaProducer#registerMetricForSubscription(KafkaMetric) 
+     * See {@link KafkaProducer#registerMetricForSubscription(KafkaMetric)}
      */
     void registerMetricForSubscription(KafkaMetric metric);
 
     /**
-     * @see KafkaProducer#unregisterMetricFromSubscription(KafkaMetric) 
+     * See {@link KafkaProducer#unregisterMetricFromSubscription(KafkaMetric)}
      */
     void unregisterMetricFromSubscription(KafkaMetric metric);
 

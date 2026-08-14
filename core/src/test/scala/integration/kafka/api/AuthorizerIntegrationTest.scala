@@ -41,7 +41,7 @@ import org.apache.kafka.common.message.OffsetForLeaderEpochRequestData.{OffsetFo
 import org.apache.kafka.common.message.{AddOffsetsToTxnRequestData, AlterPartitionReassignmentsRequestData, AlterReplicaLogDirsRequestData, AlterShareGroupOffsetsRequestData, ConsumerGroupDescribeRequestData, ConsumerGroupHeartbeatRequestData, ConsumerGroupHeartbeatResponseData, CreateAclsRequestData, CreatePartitionsRequestData, CreateTopicsRequestData, DeleteAclsRequestData, DeleteGroupsRequestData, DeleteRecordsRequestData, DeleteShareGroupOffsetsRequestData, DeleteShareGroupStateRequestData, DeleteTopicsRequestData, DescribeClusterRequestData, DescribeConfigsRequestData, DescribeGroupsRequestData, DescribeLogDirsRequestData, DescribeProducersRequestData, DescribeShareGroupOffsetsRequestData, DescribeTransactionsRequestData, FetchResponseData, FindCoordinatorRequestData, HeartbeatRequestData, IncrementalAlterConfigsRequestData, InitializeShareGroupStateRequestData, JoinGroupRequestData, ListPartitionReassignmentsRequestData, ListTransactionsRequestData, MetadataRequestData, OffsetCommitRequestData, OffsetFetchRequestData, OffsetFetchResponseData, ProduceRequestData, ReadShareGroupStateRequestData, ReadShareGroupStateSummaryRequestData, ShareAcknowledgeRequestData, ShareFetchRequestData, ShareGroupDescribeRequestData, ShareGroupHeartbeatRequestData, StreamsGroupDescribeRequestData, StreamsGroupHeartbeatRequestData, StreamsGroupHeartbeatResponseData, SyncGroupRequestData, WriteShareGroupStateRequestData, WriteTxnMarkersRequestData}
 import org.apache.kafka.common.network.ListenerName
 import org.apache.kafka.common.protocol.{ApiKeys, Errors}
-import org.apache.kafka.common.record.{MemoryRecords, RecordBatch, SimpleRecord}
+import org.apache.kafka.common.record.internal.{MemoryRecords, RecordBatch, SimpleRecord}
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.resource.PatternType.{LITERAL, PREFIXED}
 import org.apache.kafka.common.resource.ResourceType._
@@ -1669,7 +1669,19 @@ class AuthorizerIntegrationTest extends AbstractAuthorizerIntegrationTest {
     addAndVerifyAcls(acls, resource)
 
     waitUntilTrue(() => {
-      consumer.poll(Duration.ofMillis(50L))
+      try {
+        consumer.poll(Duration.ofMillis(50L))
+      } catch {
+        // In AsyncKafkaConsumer the TOPIC_AUTHORIZATION_FAILED error from the 1st metadata
+        // response is queued by the background thread and only delivered to the app thread on
+        // the next poll(), so assertThrows returns one full poll-timeout (~50ms) later than
+        // in the fix before KAFKA-20426. By then most of the 100ms retry backoff (retry.backoff.ms)
+        // has already elapsed, and the 2nd metadata request can fire just milliseconds after
+        // addAndVerifyAcls returns — potentially before the CREATE ACL has been committed on
+        // the broker. That produces another TOPIC_AUTHORIZATION_FAILED which is delivered on
+        // the first poll() in waitUntilTrue. Swallow it so the loop keeps retrying.
+        case _: TopicAuthorizationException =>
+      }
       brokers.forall { broker =>
         OptionConverters.toScala(broker.metadataCache.getLeaderAndIsr(newTopic, 0)) match {
           case Some(partitionState) => FetchRequest.isValidBrokerId(partitionState.leader)
@@ -3123,8 +3135,10 @@ class AuthorizerIntegrationTest extends AbstractAuthorizerIntegrationTest {
     addAndVerifyAcls(Set(allowAllOpsAcl), groupResource)
     addAndVerifyAcls(Set(allowAllOpsAcl), topicResource)
 
-    val response = sendAndReceiveFirstRegexHeartbeat(Uuid.randomUuid.toString, listenerName)
-    sendAndReceiveRegexHeartbeat(response, listenerName, Some(1))
+    var response = sendAndReceiveFirstRegexHeartbeat(Uuid.randomUuid.toString, listenerName)
+    TestUtils.tryUntilNoAssertionError() {
+      response = sendAndReceiveRegexHeartbeat(response, listenerName, Some(1))
+    }
   }
 
   @Test
@@ -3902,6 +3916,7 @@ class AuthorizerIntegrationTest extends AbstractAuthorizerIntegrationTest {
     streamsConsumerConfig.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false")
     val consumer = createStreamsConsumer(streamsRebalanceData = new StreamsRebalanceData(
       UUID.randomUUID(),
+      Optional.empty(),
       Optional.empty(),
       util.Map.of(
         "subtopology-0", new StreamsRebalanceData.Subtopology(

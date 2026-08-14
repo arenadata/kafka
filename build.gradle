@@ -39,7 +39,7 @@ plugins {
 
   id "com.github.spotbugs" version '6.4.4' apply false
   id 'org.scoverage' version '8.1' apply false
-  id 'com.gradleup.shadow' version '8.3.9' apply false
+  id 'com.gradleup.shadow' version '9.3.1' apply false
   id 'com.diffplug.spotless' version "8.0.0"
 }
 
@@ -140,14 +140,14 @@ ext {
   runtimeTestLibs = [
     libs.slf4jLog4j2,
     libs.junitPlatformLanucher,
-    libs.jacksonDatabindYaml,
+    libs.jacksonDataformatYaml,
     project(":test-common:test-common-util")
   ]
 
   log4jReleaseLibs = [
     libs.slf4jLog4j2,
     libs.log4j1Bridge2Api,
-    libs.jacksonDatabindYaml
+    libs.jacksonDataformatYaml
   ]
 
   log4j2Libs = [
@@ -703,6 +703,15 @@ subprojects {
 
   task docsJar(dependsOn: javadocJar)
 
+  // Consumed by root aggregatedJavadoc; mirrors compileClasspath.
+  configurations {
+    javadocClasspathElements {
+      canBeConsumed = true
+      canBeResolved = false
+      extendsFrom configurations.compileClasspath
+    }
+  }
+
   check.dependsOn('javadoc')
 
   task systemTestLibs(dependsOn: jar)
@@ -881,6 +890,29 @@ subprojects {
       removeUnusedImports()
     }
   }
+
+  tasks.register("checkJsonLicenseHeader") {
+    group = "Verification"
+    description = "Verify ASF License header in JSON files"
+
+    doLast {
+      def asfHeader = file("${rootProject.projectDir}/gradle/LICENSE.json").readLines()*.trim()
+
+      def incorrectFiles = fileTree(projectDir) {
+        include 'src/main/resources/**/*.json'
+        include 'src/test/resources/**/*.json'
+      }.findAll { f ->
+        f.readLines().take(asfHeader.size())*.trim() != asfHeader
+      }
+
+      if (incorrectFiles) {
+        println "\n${project.name}: Incorrect ASF license header in JSON files:"
+        incorrectFiles.each { println "  - $it" }
+        throw new GradleException("${incorrectFiles.size()} JSON files with incorrect ASF license header")
+      }
+    }
+  }
+  check.dependsOn("checkJsonLicenseHeader")
 }
 
 gradle.taskGraph.whenReady { taskGraph ->
@@ -952,6 +984,8 @@ project(':server') {
   dependencies {
     compileOnly libs.bndlib
     compileOnly libs.spotbugs
+
+    implementation libs.commonsValidator
 
     implementation project(':clients')
     implementation project(':metadata')
@@ -1075,11 +1109,10 @@ project(':core') {
     implementation project(':share-coordinator')
 
     implementation libs.argparse4j
-    implementation libs.commonsValidator
     implementation libs.jacksonDatabind
     implementation libs.jacksonDataformatCsv
     implementation libs.jacksonJDK8Datatypes
-    implementation libs.jacksonDatabindYaml
+    implementation libs.jacksonDataformatYaml
     implementation libs.joptSimple
     implementation libs.jose4j
     implementation libs.metrics
@@ -1103,7 +1136,6 @@ project(':core') {
     testImplementation project(':test-common:test-common-util')
     testImplementation libs.bcpkix
     testImplementation libs.mockitoCore
-    testImplementation libs.jqwik
     testImplementation(libs.apacheda) {
       exclude group: 'xml-apis', module: 'xml-apis'
       // `mina-core` is a transitive dependency for `apacheds` and `apacheda`.
@@ -1242,6 +1274,8 @@ project(':core') {
     archiveClassifier = 'site-docs'
     compression = Compression.GZIP
     from project.file("$rootDir/docs")
+    from "$rootDir/LICENSE"
+    from "$rootDir/NOTICE"
     into 'site-docs'
     duplicatesStrategy 'exclude'
   }
@@ -1303,7 +1337,7 @@ project(':core') {
 
   test {
     useJUnitPlatform {
-      includeEngines 'jqwik', 'junit-jupiter'
+      includeEngines 'junit-jupiter'
     }
   }
 
@@ -1494,7 +1528,7 @@ project(':group-coordinator') {
     testImplementation project(':clients').sourceSets.test.output
     testImplementation project(':server-common').sourceSets.test.output
     testImplementation project(':coordinator-common').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation testLog4j2Libs
@@ -1616,7 +1650,7 @@ project(':test-common:test-common-runtime') {
 
     implementation libs.junitPlatformLanucher
     implementation libs.junitJupiter
-    implementation libs.jacksonDatabindYaml
+    implementation libs.jacksonDataformatYaml
     implementation libs.slf4jApi
 
     testImplementation libs.junitJupiter
@@ -1831,12 +1865,9 @@ project(':generator') {
     implementation libs.jacksonDatabind
     implementation libs.jacksonJDK8Datatypes
     implementation libs.jacksonJakartarsJsonProvider
-
-    implementation 'org.eclipse.jgit:org.eclipse.jgit:7.2.0.202503040940-r'
-    // SSH support for JGit based on Apache MINA sshd
-    implementation 'org.eclipse.jgit:org.eclipse.jgit.ssh.apache:7.2.0.202503040940-r'
-    // GPG support for JGit based on BouncyCastle (commit signing)
-    implementation 'org.eclipse.jgit:org.eclipse.jgit.gpg.bc:7.2.0.202503040940-r'
+    implementation libs.jgit
+    implementation libs.jgitSshApache
+    implementation libs.jgitGpgBc
 
     testImplementation libs.junitJupiter
 
@@ -1888,6 +1919,8 @@ project(':clients') {
     testImplementation libs.mockitoCore
     testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
     testImplementation testLog4j2Libs
+    testImplementation libs.testcontainersKeycloak
+    testImplementation libs.testcontainersJunitJupiter
 
     testCompileOnly libs.bndlib
 
@@ -2023,6 +2056,7 @@ project(':clients') {
     include "**/org/apache/kafka/common/metrics/*"
     include "**/org/apache/kafka/common/metrics/stats/*"
     include "**/org/apache/kafka/common/quota/*"
+    include "**/org/apache/kafka/common/record/*"
     include "**/org/apache/kafka/common/resource/*"
     include "**/org/apache/kafka/common/security/auth/*"
     include "**/org/apache/kafka/common/security/oauthbearer/*"
@@ -2030,6 +2064,7 @@ project(':clients') {
     include "**/org/apache/kafka/common/security/scram/*"
     include "**/org/apache/kafka/common/security/token/delegation/*"
     include "**/org/apache/kafka/common/serialization/*"
+    include "**/org/apache/kafka/common/utils/Bytes.java"
     include "**/org/apache/kafka/server/authorizer/*"
     include "**/org/apache/kafka/server/policy/*"
     include "**/org/apache/kafka/server/quota/*"
@@ -2048,6 +2083,7 @@ project(':clients:clients-integration-tests') {
     testImplementation project(':test-common:test-common-internal-api')
     testImplementation project(':test-common:test-common-runtime')
     testImplementation project(':metadata')
+    testImplementation project(':raft')
     testImplementation project(':server')
     testImplementation project(':storage')
     testImplementation project(':core').sourceSets.test.output
@@ -2084,6 +2120,7 @@ project(':raft') {
   dependencies {
     implementation project(':server-common')
     implementation project(':clients')
+    implementation project(':storage')
     implementation libs.jacksonDatabind
     implementation libs.slf4jApi
 
@@ -2091,7 +2128,7 @@ project(':raft') {
     testImplementation project(':server-common').sourceSets.test.output
     testImplementation project(':clients')
     testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.jqwik
@@ -2188,7 +2225,7 @@ project(':server-common') {
 
     testImplementation project(':clients')
     testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation testLog4j2Libs
@@ -2304,7 +2341,6 @@ project(':storage') {
   }
 
   dependencies {
-    implementation project(':metadata')
     implementation project(':storage:storage-api')
     implementation project(':server-common')
     implementation project(':clients')
@@ -2329,7 +2365,7 @@ project(':storage') {
     testImplementation project(':server-common').sourceSets.test.output
     testImplementation project(':transaction-coordinator')
     testImplementation libs.hamcrest
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.bcpkix
@@ -2486,6 +2522,7 @@ project(':tools') {
     implementation project(':clients')
     implementation project(':metadata')
     implementation project(':storage')
+    implementation project(':storage:storage-api')
     implementation project(':server')
     implementation project(':server-common')
     implementation project(':connect:runtime')
@@ -2647,7 +2684,7 @@ project(':shell') {
     testImplementation project(':core')
     testImplementation project(':server-common')
     testImplementation project(':server-common').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation testLog4j2Libs
 
@@ -2696,7 +2733,7 @@ project(':streams') {
     testCompileOnly libs.bndlib
 
     testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.bcpkix
     testImplementation libs.hamcrest
@@ -2841,7 +2878,7 @@ project(':streams:streams-scala') {
     testImplementation project(':clients').sourceSets.test.output
     testImplementation project(':streams:test-utils')
 
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoJunitJupiter // supports MockitoExtension
     testImplementation testLog4j2Libs
@@ -2945,7 +2982,7 @@ project(':streams:test-utils') {
     implementation libs.slf4jApi
 
     testImplementation project(':clients').sourceSets.test.output
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.hamcrest
@@ -3411,6 +3448,7 @@ project(':jmh-benchmarks') {
     implementation project(':group-coordinator')
     implementation project(':group-coordinator:group-coordinator-api')
     implementation project(':metadata')
+    implementation project(':share-coordinator')
     implementation project(':storage')
     implementation project(':streams')
     implementation project(':transaction-coordinator')
@@ -3419,7 +3457,6 @@ project(':jmh-benchmarks') {
     implementation project(':connect:transforms')
     implementation project(':connect:json')
     implementation project(':clients').sourceSets.test.output
-    implementation project(':core').sourceSets.test.output
     implementation project(':server-common').sourceSets.test.output
     implementation project(':metadata').sourceSets.test.output
 
@@ -3634,6 +3671,7 @@ project(':connect:runtime') {
     testImplementation project(':test-common:test-common-internal-api')
     testImplementation project(':test-common:test-common-util')
     testImplementation project(':test-common:test-common-runtime')
+    testImplementation project(':raft')
     testImplementation project(':server-common')
     testImplementation project(':server')
     testImplementation project(':group-coordinator')
@@ -3641,7 +3679,7 @@ project(':connect:runtime') {
     testImplementation project(':connect:test-plugins')
     testImplementation project(':server-common').sourceSets.test.output
 
-    testImplementation libs.jacksonDatabindYaml
+    testImplementation libs.jacksonDataformatYaml
     testImplementation libs.junitJupiter
     testImplementation libs.mockitoCore
     testImplementation libs.mockitoJunitJupiter
@@ -3862,6 +3900,7 @@ project(':connect:mirror') {
     testImplementation project(':connect:runtime').sourceSets.test.output
     testImplementation project(':core')
     testImplementation project(':test-common:test-common-runtime')
+    testImplementation project(':raft')
     testImplementation project(':server')
     testImplementation project(':server-common')
 
@@ -3967,12 +4006,34 @@ project(':connect:test-plugins') {
   }
 }
 
-task aggregatedJavadoc(type: Javadoc, dependsOn: compileJava) {
+// Gradle 9+ forbids resolving a subproject's Configuration from the root.
+// Consume each subproject's javadocClasspathElements via project dependencies instead.
+configurations {
+  aggregatedJavadocClasspath {
+    canBeConsumed = false
+    canBeResolved = true
+  }
+}
+
+task aggregatedJavadoc(type: Javadoc) {
+  destinationDir = file("${layout.buildDirectory.get().asFile.path}/docs/javadoc")
+}
+
+gradle.projectsEvaluated {
   def projectsWithJavadoc = subprojects.findAll { it.javadoc.enabled }
-  source = projectsWithJavadoc.collect { it.sourceSets.main.allJava }
-  classpath = files(projectsWithJavadoc.collect { it.sourceSets.main.compileClasspath })
-  includes = projectsWithJavadoc.collectMany { it.javadoc.getIncludes() }
-  excludes = projectsWithJavadoc.collectMany { it.javadoc.getExcludes() }
+
+  projectsWithJavadoc.each { sp ->
+    dependencies.add('aggregatedJavadocClasspath',
+        dependencies.project(path: sp.path, configuration: 'javadocClasspathElements'))
+  }
+
+  tasks.named('aggregatedJavadoc').configure {
+    dependsOn projectsWithJavadoc.collect { "${it.path}:compileJava" }
+    source    projectsWithJavadoc.collect { it.sourceSets.main.allJava }
+    classpath = configurations.aggregatedJavadocClasspath
+    includes  = projectsWithJavadoc.collectMany { it.javadoc.getIncludes() }
+    excludes  = projectsWithJavadoc.collectMany { it.javadoc.getExcludes() }
+  }
 }
 
 
@@ -4118,6 +4179,41 @@ def verifyVersionConsistencyTask = tasks.register('verifyVersionConsistency') {
 
 check.dependsOn verifyVersionConsistencyTask
 
+def verifyLatestStableMetadataVersionTask = tasks.register('verifyLatestStableMetadataVersion') {
+  group = "Verification"
+  description = "Verifies that LATEST_STABLE_METADATA_VERSION in version.py matches LATEST_PRODUCTION in MetadataVersion.java"
+
+  doLast {
+    // Extract enum constant name that LATEST_PRODUCTION points to, e.g. LATEST_PRODUCTION = IBP_4_3_IV0 -> IBP_4_3_IV0
+    def mvContent = file("${project.rootDir}/server-common/src/main/java/org/apache/kafka/server/common/MetadataVersion.java").text
+    def pyContent = file("${project.rootDir}/tests/kafkatest/version.py").text
+
+    def latestProductionEnumName = mvContent =~ /LATEST_PRODUCTION\s*=\s*(IBP_\w+)/
+    if (!latestProductionEnumName) throw new GradleException("Could not find LATEST_PRODUCTION in MetadataVersion.java")
+    def latestProductionEnumConstant = latestProductionEnumName[0][1] // e.g. "IBP_4_3_IV0"
+
+    // Extract version from enum constant, e.g. IBP_4_3_IV0(30, "4.3", "IV0", true) -> 4.3-IV0
+    def enumMatch = mvContent =~ /${latestProductionEnumConstant}\(\d+,\s*"(\d+\.\d+)",\s*"(IV\d+)"/
+    if (!enumMatch) throw new GradleException("Could not find enum definition for ${latestProductionEnumConstant} in MetadataVersion.java")
+    def javaVersion = "${enumMatch[0][1]}-${enumMatch[0][2]}" // e.g. "4.3-IV0"
+
+    def pyMatch = pyContent =~ /LATEST_STABLE_METADATA_VERSION\s*=\s*"([^"]+)"/
+    if (!pyMatch) throw new GradleException("LATEST_STABLE_METADATA_VERSION not found in version.py")
+    def pyVersion = pyMatch[0][1] // e.g. "4.3-IV0"
+
+    if (javaVersion != pyVersion) {
+      throw new GradleException(
+        "LATEST_STABLE_METADATA_VERSION mismatch: MetadataVersion.java LATEST_PRODUCTION=${javaVersion}, " +
+        "tests/kafkatest/version.py LATEST_STABLE_METADATA_VERSION=${pyVersion}. " +
+        "Make sure LATEST_PRODUCTION in MetadataVersion.java and LATEST_STABLE_METADATA_VERSION in tests/kafkatest/version.py are in sync."
+      )
+    }
+    println "MetadataVersion.java LATEST_PRODUCTION=${latestProductionEnumConstant} (${javaVersion}) matches version.py LATEST_STABLE_METADATA_VERSION=${pyVersion}"
+  }
+}
+
+check.dependsOn verifyLatestStableMetadataVersionTask
+
 def connectBinFiles = [
    'connect-distributed.sh',
    'connect-mirror-maker.sh',
@@ -4131,11 +4227,21 @@ def connectConfigFiles = [
   'connect-distributed.properties',
   'connect-file-sink.properties',
   'connect-file-source.properties',
-  'connect-log4j.properties',
+  'connect-log4j2.yaml',
   'connect-mirror-maker.properties',
   'connect-standalone.properties'
 ]
 
+// Resolve Connect artifacts from a root-owned configuration. Gradle 9 does not
+// allow this task to resolve runtimeClasspath configurations owned by subprojects.
+def connectReleaseRuntimeClasspath = configurations.create('connectReleaseRuntimeClasspath') {
+  canBeConsumed = false
+  canBeResolved = true
+}
+
+connectPkgs.each { pkg ->
+  dependencies.add(connectReleaseRuntimeClasspath.name, dependencies.project(path: ":${pkg}"))
+}
 
 tasks.create(name: "connectReleaseTarGz", type: Tar) {
   
@@ -4154,16 +4260,9 @@ tasks.create(name: "connectReleaseTarGz", type: Tar) {
     from "$rootDir/LICENSE-binary" rename {String filename -> filename.replace("-binary", "")}
     from "$rootDir/NOTICE"
 
-    // Add runtime dependencies
-    from(configurations.runtimeClasspath) { into("libs/") }
-
-    // Add Kafka Connect packages
-    connectPkgs.each { pkg ->
-        from(project(pkg).jar) { into("libs/") }
-        from(project(pkg).configurations.runtimeClasspath) { into("libs/") }
-    }
+    // Add Kafka Connect packages and their runtime dependencies.
+    from(connectReleaseRuntimeClasspath) { into("libs/") }
 
     duplicatesStrategy 'exclude'
 
 }
-

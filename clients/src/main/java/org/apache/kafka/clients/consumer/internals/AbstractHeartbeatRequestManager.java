@@ -53,7 +53,7 @@ import static org.apache.kafka.clients.consumer.internals.RequestState.RETRY_BAC
  * <p>If the member got kicked out of a group, it will try to give up the current assignment by invoking {@code
  * OnPartitionsLost} before attempting to join again with a zero epoch.
  *
- * <p>If the coordinator not is not found, we will skip sending the heartbeat and try to find a coordinator first.
+ * <p>If the coordinator is not found, we will skip sending the heartbeat and try to find a coordinator first.
  *
  * <p>When the member completes the assignment reconciliation, the {@link HeartbeatRequestState} will be reset so
  * that a heartbeat will be sent in the next event loop.
@@ -245,12 +245,17 @@ public abstract class AbstractHeartbeatRequestManager<R extends AbstractResponse
      * <p>Similarly, we may have to unblock the application thread to send a {@link AsyncPollEvent} to make sure
      * our poll timer will not expire while we are polling.
      *
-     * <p>In the event that heartbeats are currently being skipped, this still returns the next heartbeat
-     * delay rather than {@code Long.MAX_VALUE} so that the application thread remains responsive.
+     * <p>When the member is {@link MemberState#UNSUBSCRIBED} (for example, with manual assignment),
+     * this returns {@code Long.MAX_VALUE} to indicate there is no next heartbeat to wait for,
+     * allowing the application thread to block for the full user-specified poll timeout rather than
+     * spinning in a busy loop.
      */
     @Override
     public long maximumTimeToWait(long currentTimeMs) {
         pollTimer.update(currentTimeMs);
+        if (membershipManager().state() == MemberState.UNSUBSCRIBED) {
+            return Long.MAX_VALUE;
+        }
         if (pollTimer.isExpired() || (membershipManager().shouldHeartbeatNow() && !heartbeatRequestState.requestInFlight())) {
             return 0L;
         }

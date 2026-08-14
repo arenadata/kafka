@@ -65,6 +65,7 @@ This section contains the most common Streams configuration parameters. For a fu
     * default.timestamp.extractor
     * default.value.serde
     * deserialization.exception.handler
+    * dsl.store.format
     * enable.metrics.push
     * ensure.explicit.internal.resource.naming
     * group.protocol
@@ -75,6 +76,7 @@ This section contains the most common Streams configuration parameters. For a fu
     * num.stream.threads
     * probing.rebalance.interval.ms
     * processing.exception.handler
+    * processing.exception.handler.global.enabled (deprecated)
     * processing.guarantee
     * processor.wrapper.class
     * production.exception.handler
@@ -170,7 +172,7 @@ None
 
 ### bootstrap.servers
 
-> (Required) The Kafka bootstrap servers. This is the same [setting](/42/documentation.html#producerconfigs) that is used by the underlying producer and consumer clients to connect to the Kafka cluster. Example: `"kafka-broker1:9092,kafka-broker2:9092"`.
+> (Required) The Kafka bootstrap servers. This is the same [setting](/43/documentation.html#producerconfigs) that is used by the underlying producer and consumer clients to connect to the Kafka cluster. Example: `"kafka-broker1:9092,kafka-broker2:9092"`.
 
 ## Recommended configuration parameters for resiliency
 
@@ -283,7 +285,7 @@ Increasing the replication factor to 3 ensures that the internal Kafka Streams t
 
 ### min.insync.replicas
 
-The minimum number of in-sync replicas available for replication if the producer is configured with `acks="all"` (see [topic configs](/42/documentation/#topicconfigs_min.insync.replicas)). 
+The minimum number of in-sync replicas available for replication if the producer is configured with `acks="all"` (see [topic configs](/43/documentation/#topicconfigs_min.insync.replicas)). 
 
 ### num.standby.replicas
 
@@ -599,6 +601,23 @@ Defines a default state store implementation to be used by any stateful DSL oper
 `BuiltInDslStoreSuppliers.RocksDBDslStoreSuppliers`
 </td> </tr>  
 <tr>  
+<td>
+
+dsl.store.format
+</td>
+<td>
+
+Low
+</td>
+<td>
+
+Controls whether DSL operators materialize headers-aware state stores. Case-insensitive. Accepted values: `default` (uses existing timestamped or plain store variants per operator) and `headers` (selects headers-aware stores that can persist record headers alongside values and timestamps; local state can be larger than under `default`).
+</td>
+<td>
+
+`default`
+</td> </tr>
+<tr>
 <td>
 
 ensure.explicit.internal.resource.naming
@@ -1038,8 +1057,24 @@ The amount of time in milliseconds to wait before deleting state when a partitio
 </td>  
 <td>
 
-`600000`
-</td> (10 minutes)
+`600000` (10 minutes)
+</td> </tr>
+<tr>
+<td>
+
+state.cleanup.dir.max.age.ms
+</td>
+<td>
+
+Low
+</td>
+<td>
+
+Time-based threshold for purging local state directories and checkpoint files during application startup. State directories that have not been modified for at least `state.cleanup.dir.max.age.ms` will be removed.
+</td>
+<td>
+
+`-1` (Disabled)
 </td> </tr>  
 <tr>  
 <td>
@@ -1342,13 +1377,28 @@ Serde for the inner class of a windowed record. Must implement the `Serde` inter
 > 
 > This is discussed in more detail in [Data types and serialization](datatypes.html#streams-developer-guide-serdes).
 
+### dsl.store.format {#dsl-store-format}
+
+> Selects the state store format used by all DSL operators that materialize a state store. Accepted values are `DEFAULT` and `HEADERS` (case-insensitive); the default is `DEFAULT`.
+>
+> * `DEFAULT`: Uses the existing timestamped or plain store variant per operator. Existing applications are unaffected.
+> * `HEADERS`: Uses headers-aware stores (introduced by [KIP-1271](https://cwiki.apache.org/confluence/x/QIM8G)) that can persist record headers alongside the value and timestamp.
+>
+> This config is global. Per-operator customization is possible by providing a custom `DslStoreSuppliers` via `Materialized.withStoreType(...)`, or by supplying explicit headers-aware store suppliers. Note that `dsl.store.format` is orthogonal to `dsl.store.suppliers.class`, which selects the store *implementation* (e.g., RocksDB vs in-memory); the two can be set independently.
+>
+> The accepted string values are `DEFAULT` and `HEADERS` (case-insensitive). These differ from the `DslStoreFormat` Java enum, which has constants `PLAIN`, `TIMESTAMPED`, and `HEADERS`; `DslStoreFormat.DEFAULT` does not exist as an enum constant.
+>
+> See [KIP-1271](https://cwiki.apache.org/confluence/x/QIM8G) for migration procedures, changelog compatibility, restore behavior, and per-record overhead.
+>
+> **Current limitations**: `dsl.store.format=HEADERS` changes the state store format. It does not define how DSL operators create headers for output records. Some operators write empty headers to their materialized stores, and the buffer stores used by `suppress()` and left/outer stream-stream joins are not headers-aware. See [Stateful transformations](/{version}/streams/developer-guide/dsl-api.html#stateful-transformations) and the [Streams upgrade guide](/{version}/streams/upgrade-guide.html#current-limitations) for details.
+
 ### ensure.explicit.internal.resource.naming
 
 > Whether to enforce explicit naming for all internal resources of the topology, including internal topics (e.g., changelog and repartition topics) and their associated state stores. When enabled, the application will refuse to start if any internal resource has an auto-generated name. 
 
 ### group.protocol
 
-> The group protocol used by the Kafka Streams client used for coordination. It determines how the client will communicate with the Kafka brokers and other clients in the same group. The default value is `"classic"`, which is the classic consumer group protocol. Can be set to `"streams"` (requires broker-side enablement) to enable the new Kafka Streams group protocol. Note that the "streams" rebalance protocol is an Early Access feature and should not be used in production. 
+> The group protocol used by the Kafka Streams client used for coordination. It determines how the client will communicate with the Kafka brokers and other clients in the same group. The default value is `"classic"`, which is the classic consumer group protocol. Can be set to `"streams"` (requires broker-side enablement) to enable the new Kafka Streams group protocol.
 
 ### rack.aware.assignment.non_overlap_cost
 
@@ -1422,7 +1472,7 @@ Serde for the inner class of a windowed record. Must implement the `Serde` inter
 
 > The maximum number of warmup replicas (extra standbys beyond the configured `num.standbys`) that can be assigned at once for the purpose of keeping the task available on one instance while it is warming up on another instance it has been reassigned to. Used to throttle how much extra broker traffic and cluster state can be used for high availability. Increasing this will allow Streams to warm up more tasks at once, speeding up the time for the reassigned warmups to restore sufficient state for them to be transitioned to active tasks. Must be at least 1. 
 > 
-> Note that one warmup replica corresponds to one [Stream Task](/42/documentation/streams/architecture#streams_architecture_tasks). Furthermore, note that each warmup task can only be promoted to an active task during a rebalance (normally during a so-called probing rebalance, which occur at a frequency specified by the `probing.rebalance.interval.ms` config). This means that the maximum rate at which active tasks can be migrated from one Kafka Streams instance to another instance can be determined by (`max.warmup.replicas` / `probing.rebalance.interval.ms`). 
+> Note that one warmup replica corresponds to one [Stream Task](/43/documentation/streams/architecture#streams_architecture_tasks). Furthermore, note that each warmup task can only be promoted to an active task during a rebalance (normally during a so-called probing rebalance, which occur at a frequency specified by the `probing.rebalance.interval.ms` config). This means that the maximum rate at which active tasks can be migrated from one Kafka Streams instance to another instance can be determined by (`max.warmup.replicas` / `probing.rebalance.interval.ms`). 
 
 ### num.standby.replicas
 
@@ -1446,7 +1496,7 @@ Serde for the inner class of a windowed record. Must implement the `Serde` inter
 
 > The processing exception handler allows you to manage exceptions triggered during the processing of a record. The implemented exception handler needs to return a `FAIL` or `CONTINUE` depending on the record and the exception thrown. Returning `FAIL` will signal that Streams should shut down and `CONTINUE` will signal that Streams should ignore the issue and continue processing.
 > 
-> **Note:** This handler applies only to regular stream processing tasks. It does not apply to global state store updates (global threads). Exceptions occurring in global threads will bubble up to the configured uncaught exception handler.
+> **Note:** By default, this handler applies only to regular stream processing tasks. To enable exception handling for global stores/KTable processing (which is recommended), see `processing.exception.handler.global.enabled` below. When global exception handling is disabled (default), exceptions occurring during global store/KTable processing will bubble up to the configured uncaught exception handler.
 > 
 > The following library built-in exception handlers are available:
 > 
@@ -1483,6 +1533,87 @@ Serde for the inner class of a windowed record. Must implement the `Serde` inter
 >             dlqTopic = .. // get the topic name from the configs map
 >         }
 >     }
+
+>**Note: The example above demonstrates manual production to a DLQ topic. The following example shows the recommended approach using the built-in DLQ support.**
+> A custom processing exception handler can decide whether to continue or fail processing when user logic throws an exception. If DLQ behavior is required, return DLQ records from the handler response.
+>
+> **Custom Exception Handler Implementation**
+>
+> The following example forwards failed records to a configured DLQ topic:
+>
+> ```java
+> public class DlqProcessingExceptionHandler implements ProcessingExceptionHandler {
+>
+>     private String deadLetterQueueTopic;
+>
+>     @Override
+>     public Response handleError(final ErrorHandlerContext context,
+>                                 final Record<?, ?> record,
+>                                 final Exception exception) {
+>
+>       // Example: forward the raw record to a DLQ topic
+>       ProducerRecord<byte[], byte[]> dlqRecord =
+>           new ProducerRecord<>(deadLetterQueueTopic,
+>                                null,
+>                                context.timestamp(),
+>                                context.sourceRawKey(),
+>                                context.sourceRawValue());
+>
+>       // Applications may choose how to construct DLQ records. For example,
+>       // they may forward the raw key/value bytes, transform the payload,
+>       // or add headers with error metadata.
+>       return Response.resume(List.of(dlqRecord));
+>      }
+>
+>     @Override
+>     public void configure(final Map<String, ?> configs) {
+>         // Retrieve the DLQ topic name from the configs map, or any other source
+>         deadLetterQueueTopic = (String) configs.get("my.dlq.topic.config.key");
+>     }
+> }
+> ```
+> To enable the custom exception handler and configure the DLQ topic:
+>
+> ```java
+> Properties props = new Properties();
+>
+> props.put(
+>     StreamsConfig.PROCESSING_EXCEPTION_HANDLER_CLASS_CONFIG,
+>     DlqProcessingExceptionHandler.class
+> );
+>
+>//   Optional: if your custom handler reads the DLQ topic from StreamsConfig,
+>//   set it here. Otherwise, configure the topic name via your own properties.
+> //  props.put(
+> //    StreamsConfig.ERRORS_DEAD_LETTER_QUEUE_TOPIC_NAME_CONFIG,
+> //    "dlq-topic"
+> //  );
+> ```
+### processing.exception.handler.global.enabled (deprecated)
+
+> Controls whether the configured `ProcessingExceptionHandler` is invoked for exceptions occurring during global store/KTable processing. When set to `true` (recommended), the handler specified via `processing.exception.handler` will be invoked for exceptions occurring during global store/KTable processing. When set to `false` (default), exceptions from global store/KTable will not invoke the processing exception handler and will instead bubble up to the configured uncaught exception handler.
+> 
+> **Default value:** `false`
+> 
+> **Deprecated:** The config is deprecated for removal in 5.0 release. With the removal of the config, the processing exception handler will be applied during global state/KTable processing and cannot be disabled any longer. Thus, it's recommended to enable this config now, to avoid backward incompatibilities in the future.
+> 
+> **Important Notes:**
+> 
+>   * Dead Letter Queue (DLQ) functionality is not supported for global store/KTable. For global store/KTable exceptions, the record metadata will be logged and the record will not be sent to the DLQ.
+>   * When this feature is enabled, you can use either the built-in handlers (`LogAndContinueProcessingExceptionHandler` or `LogAndFailProcessingExceptionHandler`) or provide a custom implementation of `ProcessingExceptionHandler`.
+>   * For more details, see [KIP-1270](https://cwiki.apache.org/confluence/display/KAFKA/KIP-1270%3A+Extend+ProcessExceptionalHandler+for+GlobalThread).
+> 
+> **Example Configuration:**
+>     
+>     
+>     Properties streamsSettings = new Properties();
+>     
+>     // Configure the processing exception handler
+>     streamsSettings.put(StreamsConfig.PROCESSING_EXCEPTION_HANDLER_CLASS_CONFIG, 
+>                         LogAndContinueProcessingExceptionHandler.class);
+>     
+>     // Enable exception handling for Global KTables
+>     streamsSettings.put(StreamsConfig.PROCESSING_EXCEPTION_HANDLER_GLOBAL_ENABLED_CONFIG, true);
 
 ### processing.guarantee
 
@@ -1566,7 +1697,24 @@ We recommend listing specific optimizations in the config for production code so
 
 These optimizations include moving/reducing repartition topics and reusing the source topic as the changelog for source KTables. These optimizations will save on network traffic and storage in Kafka without changing the semantics of your applications. Enabling them is recommended. 
 
-Note that you need to do two things to enable optimizations. In addition to setting this config to `StreamsConfig.OPTIMIZE`, you'll need to pass in your configuration properties when building your topology by using the overloaded `StreamsBuilder.build(Properties)` method. For example `KafkaStreams myStream = new KafkaStreams(streamsBuilder.build(properties), properties)`. 
+**Important:** Enabling optimizations requires two steps. Both are necessary — setting the config alone is not enough:
+
+1. Set `topology.optimization` to `StreamsConfig.OPTIMIZE` (or a comma-separated list of specific optimizations) in your `Properties` object.
+2. Pass the same `Properties` object to the overloaded `StreamsBuilder.build(Properties)` method when building your topology.
+
+For example:
+
+```java
+Properties properties = new Properties();
+properties.put(StreamsConfig.TOPOLOGY_OPTIMIZATION_CONFIG, StreamsConfig.OPTIMIZE);
+
+// Step 2: pass properties to build() — this is required for optimizations to take effect
+Topology topology = streamsBuilder.build(properties);
+
+KafkaStreams myStream = new KafkaStreams(topology, properties);
+```
+
+If you call `streamsBuilder.build()` without passing the `Properties` object, optimizations will **not** be applied even if the config is set. 
  
  #### upgrade.from
 
@@ -1635,7 +1783,7 @@ Note that you need to do two things to enable optimizations. In addition to sett
  
  #### Default Values
  
- Kafka Streams uses different default values for some of the underlying client configs, which are summarized below. For detailed descriptions of these configs, see [Producer Configs](/42/documentation.html#producerconfigs) and [Consumer Configs](/42/documentation.html#consumerconfigs).  
+ Kafka Streams uses different default values for some of the underlying client configs, which are summarized below. For detailed descriptions of these configs, see [Producer Configs](/43/documentation.html#producerconfigs) and [Consumer Configs](/43/documentation.html#consumerconfigs).  
    
  <table>  
  <tr>  
@@ -1932,10 +2080,8 @@ Admin
 
 > The consumer auto commit. To guarantee at-least-once processing semantics and turn off auto commits, Kafka Streams overrides this consumer config value to `false`. Consumers will only commit explicitly via _commitSync_ calls when the Kafka Streams library or a user decides to commit the current processing state.
  
- [Previous](/42/documentation/streams/developer-guide/write-streams) [Next](/42/documentation/streams/developer-guide/dsl-api)
+ [Previous](/43/documentation/streams/developer-guide/write-streams) [Next](/43/documentation/streams/developer-guide/dsl-api)
  
    * [Documentation](/documentation)
    * [Kafka Streams](/documentation/streams)
    * [Developer Guide](/documentation/streams/developer-guide/)
- 
-

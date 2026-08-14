@@ -183,6 +183,7 @@ public class KafkaStreams implements AutoCloseable {
     protected final TopologyMetadata topologyMetadata;
     private final QueryableStoreProvider queryableStoreProvider;
     private final DelegatingStandbyUpdateListener delegatingStandbyUpdateListener;
+    private final LogContext logContext;
 
     GlobalStreamThread globalStreamThread;
     protected StateDirectory stateDirectory = null;
@@ -238,6 +239,11 @@ public class KafkaStreams implements AutoCloseable {
      *   </li>
      *   <li>
      *     Any state except NOT_RUNNING, PENDING_ERROR or ERROR can go to PENDING_SHUTDOWN (whenever close is called)
+     *   </li>
+     *   <li>
+     *     PENDING_SHUTDOWN and PENDING_ERROR are transitory states where the Streams application gracefully closes
+     *     its existing resources before transitioning into their corresponding terminal states. These states are
+     *     not recoverable, and only a restart would get an application back to the RUNNING state.
      *   </li>
      *   <li>
      *     PENDING_SHUTDOWN and PENDING_ERROR are transitory states where the Streams application gracefully closes
@@ -962,7 +968,7 @@ public class KafkaStreams implements AutoCloseable {
         } else {
             clientId = userClientId;
         }
-        final LogContext logContext = new LogContext(String.format("stream-client [%s] ", clientId));
+        logContext = new LogContext(String.format("stream-client [%s] ", clientId));
         this.log = logContext.logger(getClass());
         topologyMetadata.setLog(logContext);
 
@@ -1365,16 +1371,36 @@ public class KafkaStreams implements AutoCloseable {
      * {@link #setUncaughtExceptionHandler(StreamsUncaughtExceptionHandler) register an uncaught exception handler}
      * before starting the {@code KafkaStreams} instance.
      * <p>
-     * Note, for brokers with version {@code 0.9.x} or lower, the broker version cannot be checked.
-     * There will be no error and the client will hang and retry to verify the broker version until it
-     * {@link StreamsConfig#REQUEST_TIMEOUT_MS_CONFIG times out}.
-
+     * <b>Note on broker compatibility:</b>
+     * <ul>
+     *   <li>Kafka Streams 4.x requires brokers on version 2.1 or higher. Connection attempts to
+     *       older brokers will fail due to unsupported protocol versions.</li>
+     *   <li>When {@link StreamsConfig#PROCESSING_GUARANTEE_CONFIG processing.guarantee} is set to
+     *       {@link StreamsConfig#EXACTLY_ONCE_V2 exactly_once_v2}, brokers must be version 2.5 or higher.
+     *       If the broker version is too old, the application will detect this during the first rebalance
+     *       and transition to {@link State#ERROR ERROR} state.</li>
+     * </ul>
+     * <p>
+     * Broker compatibility issues are typically detected asynchronously after {@code start()} returns.
+     * Use {@link #setStateListener(StateListener)} or
+     * {@link #setUncaughtExceptionHandler(StreamsUncaughtExceptionHandler)} to be notified of such failures.
+     *
      * @throws IllegalStateException if process was already started
-     * @throws StreamsException if the Kafka brokers have version 0.10.0.x or
-     *                          if {@link StreamsConfig#PROCESSING_GUARANTEE_CONFIG exactly-once} is enabled for pre 0.11.0.x brokers
+     * @throws StreamsException if the Kafka Streams instance has fatal error and cannot be restarted
+     *
+     * @see #setStateListener(StateListener)
+     * @see #setUncaughtExceptionHandler(StreamsUncaughtExceptionHandler)
      */
     public synchronized void start() throws IllegalStateException, StreamsException {
         if (setState(State.REBALANCING)) {
+            final Long dirMaxAgeMs = applicationConfigs.getLong(StreamsConfig.STATE_CLEANUP_DIR_MAX_AGE_MS_CONFIG);
+            if (dirMaxAgeMs != StreamsConfig.STATE_CLEANUP_DIR_MAX_AGE_MS_DISABLED) {
+                log.debug("Start cleaning outdated directories");
+                stateDirectory.cleanOutdatedDirsOnStartup(dirMaxAgeMs);
+            }
+            log.debug("Initializing store offsets for existing local state");
+            stateDirectory.initializeStartupStores(topologyMetadata, logContext, streamsMetrics);
+
             log.debug("Starting Streams client");
 
             if (globalStreamThread != null) {
@@ -1432,6 +1458,9 @@ public class KafkaStreams implements AutoCloseable {
     /**
      * Shutdown this {@code KafkaStreams} instance by signaling all the threads to stop, and then wait for them to join.
      * This will block until all threads have stopped.
+     * <p>
+     * When using the classic protocol, the consumer will not leave the group explicitly. However, when using
+     * the streams group protocol ({@code group.protocol=streams}), the consumer will always leave the group.
      */
     public void close() {
         close(Optional.empty(), org.apache.kafka.streams.CloseOptions.GroupMembershipOperation.REMAIN_IN_GROUP);
@@ -1577,6 +1606,9 @@ public class KafkaStreams implements AutoCloseable {
      * threads to join.
      * A {@code timeout} of {@link Duration#ZERO} (or any other zero duration) makes the close operation asynchronous.
      * Negative-duration timeouts are rejected.
+     * <p>
+     * When using the classic protocol, the consumer will not leave the group explicitly. However, when using
+     * the streams group protocol ({@code group.protocol=streams}), the consumer will always leave the group.
      *
      * @param timeout how long to wait for the threads to shut down
      * @return {@code true} if all threads were successfully stopped&mdash;{@code false} if the timeout was reached

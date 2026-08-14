@@ -33,7 +33,7 @@ Interactive queries allow you to leverage the state of your application from out
 
 The full state of your application is typically [split across many distributed instances of your application](../architecture.html#streams_architecture_state), and across many state stores that are managed locally by these application instances.
 
-![](/42/images/streams-interactive-queries-03.png)
+![](/43/images/streams-interactive-queries-03.png)
 
 There are local and remote components to interactively querying the state of your application.
 
@@ -123,24 +123,28 @@ Supported
 Not supported (you must configure)
 </td> </tr> </table>
 
-# Querying local state stores for an app instance
+# Querying local state stores for an app instance {#querying-local-state-stores-for-an-app-instance}
 
 A Kafka Streams application typically runs on multiple instances. The state that is locally available on any given instance is only a subset of the [application's entire state](../architecture.html#streams-architecture-state). Querying the local stores on an instance will only return data locally available on that particular instance.
 
-The method `KafkaStreams#store(...)` finds an application instance's local state stores by name and type. Note that interactive queries are not supported for [versioned state stores](processor-api.html#streams-developer-guide-state-store-versioned) at this time.
+The method `KafkaStreams#store(...)` finds an application instance's local state stores by name and type. Note that interactive queries are not supported for [versioned state stores](/{version}/streams/developer-guide/processor-api/#versioned-key-value-state-stores) at this time.
 
-![](/42/images/streams-interactive-queries-api-01.png)
+![](/43/images/streams-interactive-queries-api-01.png)
 
 Every application instance can directly query any of its local state stores.
 
 The _name_ of a state store is defined when you create the store. You can create the store explicitly by using the Processor API or implicitly by using stateful operations in the DSL.
 
-The _type_ of a state store is defined by `QueryableStoreType`. You can access the built-in types via the class `QueryableStoreTypes`. Kafka Streams currently has two built-in types:
+The _type_ of a state store is defined by `QueryableStoreType`. Pass a built-in implementation from [`QueryableStoreTypes`](/{version}/javadoc/org/apache/kafka/streams/state/QueryableStoreTypes.html) as the second argument to `KafkaStreams#store(...)`. The available built-in helpers are:
 
-  * A key-value store `QueryableStoreTypes#keyValueStore()`, see Querying local key-value stores.
-  * A window store `QueryableStoreTypes#windowStore()`, see Querying local window stores.
-
-
+  * **`QueryableStoreTypes#keyValueStore()`** — see [Querying local key-value stores](#querying-local-key-value-stores).
+  * **`QueryableStoreTypes#timestampedKeyValueStore()`** — see [Querying local key-value stores](#querying-local-key-value-stores).
+  * **`QueryableStoreTypes#timestampedKeyValueStoreWithHeaders()`** — see [Header-aware stores and interactive queries](#header-aware-stores-interactive-queries).
+  * **`QueryableStoreTypes#windowStore()`** — see [Querying local window stores](#querying-local-window-stores).
+  * **`QueryableStoreTypes#timestampedWindowStore()`** — see [Querying local window stores](#querying-local-window-stores).
+  * **`QueryableStoreTypes#timestampedWindowStoreWithHeaders()`** — see [Header-aware stores and interactive queries](#header-aware-stores-interactive-queries).
+  * **`QueryableStoreTypes#sessionStore()`** — see [Querying local window stores](#querying-local-window-stores).
+  * **`QueryableStoreTypes#sessionStoreWithHeaders()`** — see [Header-aware stores and interactive queries](#header-aware-stores-interactive-queries).
 
 You can also implement your own QueryableStoreType as described in section Querying local custom state stores.
 
@@ -148,10 +152,16 @@ You can also implement your own QueryableStoreType as described in section Query
 
 Kafka Streams materializes one state store per stream partition. This means your application will potentially manage many underlying state stores. The API enables you to query all of the underlying stores without having to know which partition the data is in.
 
+<a id="header-aware-stores-interactive-queries"></a>
+
+**Note:** For a [header-aware store](/{version}/streams/developer-guide/processor-api/#headers-in-state-stores), use the **`*WithHeaders()`** entry from the list above that corresponds to your store type when interactive query results must include record headers.
+
 ## Querying local key-value stores
 
-To query a local key-value store, you must first create a topology with a key-value store. This example creates a key-value store named "CountsKeyValueStore". This store will hold the latest count for any word that is found on the topic "word-count-input".
-    
+To query key-value state, you first build a topology that includes a state store. This example uses the DSL `count()` operator on a grouped stream, which creates a timestamped key-value store named `CountsKeyValueStore`. That store holds the latest count for each word from the topic `word-count-input`.
+
+Note: These examples use `QueryableStoreTypes.keyValueStore()` and `ReadOnlyKeyValueStore<String, Long>`, so interactive queries return values only (the counts). The materialized store also retains timestamps; use `QueryableStoreTypes.timestampedKeyValueStore()` and `ReadOnlyKeyValueStore<String, ValueAndTimestamp<Long>>` if you need timestamps in query results.
+
     
     Properties  props = ...;
     StreamsBuilder builder = ...;
@@ -169,7 +179,7 @@ To query a local key-value store, you must first create a topology with a key-va
     KafkaStreams streams = new KafkaStreams(builder, props);
     streams.start();
 
-After the application has started, you can get access to "CountsKeyValueStore" and then query it via the [ReadOnlyKeyValueStore](https://github.com/apache/kafka/blob/4.2/streams/src/main/java/org/apache/kafka/streams/state/ReadOnlyKeyValueStore.java) API:
+After the application has started, you can get access to "CountsKeyValueStore" and then query it via the [ReadOnlyKeyValueStore](https://github.com/apache/kafka/blob/4.3/streams/src/main/java/org/apache/kafka/streams/state/ReadOnlyKeyValueStore.java) API:
     
     
     // Get the key-value store CountsKeyValueStore
@@ -212,8 +222,10 @@ You can also materialize the results of stateless operators by using the overloa
 
 A window store will potentially have many results for any given key because the key can be present in multiple windows. However, there is only one result per window for a given key.
 
-To query a local window store, you must first create a topology with a window store. This example creates a window store named "CountsWindowStore" that contains the counts for words in 1-minute windows.
-    
+To query a windowed store, you first build a topology with a windowed aggregation (for example, using `windowedBy` followed by `count()`). This example uses `count()` to create a timestamped window store named `CountsWindowStore` with 1-minute windows for per-word counts.
+
+Note: These examples use `QueryableStoreTypes.windowStore()` and `ReadOnlyWindowStore<String, Long>`, so interactive queries return values only per window. The materialized store also retains timestamps; use `QueryableStoreTypes.timestampedWindowStore()` and `ReadOnlyWindowStore<String, ValueAndTimestamp<Long>>` if you need timestamps in query results.
+
     
     StreamsBuilder builder = ...;
     KStream<String, String> textLines = ...;
@@ -227,7 +239,7 @@ To query a local window store, you must first create a topology with a window st
     groupedByWord.windowedBy(TimeWindows.ofSizeWithNoGrace(Duration.ofSeconds(60)))
       .count(Materialized.<String, Long, WindowStore<Bytes, byte[]>as("CountsWindowStore"));
 
-After the application has started, you can get access to "CountsWindowStore" and then query it via the [ReadOnlyWindowStore](https://github.com/apache/kafka/blob/4.2/streams/src/main/java/org/apache/kafka/streams/state/ReadOnlyWindowStore.java) API:
+After the application has started, you can get access to "CountsWindowStore" and then query it via the [ReadOnlyWindowStore](https://github.com/apache/kafka/blob/4.3/streams/src/main/java/org/apache/kafka/streams/state/ReadOnlyWindowStore.java) API:
     
     
     // Get the window store named "CountsWindowStore"
@@ -249,7 +261,7 @@ After the application has started, you can get access to "CountsWindowStore" and
 
 **Note**
 
-Only the [Processor API](processor-api.html#streams-developer-guide-processor-api) supports custom state stores.
+Only the [Processor API](/{version}/streams/developer-guide/processor-api/#implementing-custom-state-stores) supports custom state stores.
 
 Before querying the custom state stores you must implement these interfaces:
 
@@ -283,7 +295,7 @@ The class/interface hierarchy for your custom store might look something like:
 
 To make this store queryable you must:
 
-  * Provide an implementation of [QueryableStoreType](https://github.com/apache/kafka/blob/4.2/streams/src/main/java/org/apache/kafka/streams/state/QueryableStoreType.java).
+  * Provide an implementation of [QueryableStoreType](https://github.com/apache/kafka/blob/4.3/streams/src/main/java/org/apache/kafka/streams/state/QueryableStoreType.java).
   * Provide a wrapper class that has access to all of the underlying instances of the store and is used for querying.
 
 
@@ -306,7 +318,7 @@ Here is how to implement `QueryableStoreType`:
 
 A wrapper class is required because each instance of a Kafka Streams application may run multiple stream tasks and manage multiple local instances of a particular state store. The wrapper class hides this complexity and lets you query a "logical" state store by name without having to know about all of the underlying local instances of that state store.
 
-When implementing your wrapper class you must use the [StateStoreProvider](https://github.com/apache/kafka/blob/4.2/streams/src/main/java/org/apache/kafka/streams/state/internals/StateStoreProvider.java) interface to get access to the underlying instances of your store. `StateStoreProvider#stores(String storeName, QueryableStoreType<T> queryableStoreType)` returns a `List` of state stores with the given storeName and of the type as defined by `queryableStoreType`.
+When implementing your wrapper class you must use the [StateStoreProvider](https://github.com/apache/kafka/blob/4.3/streams/src/main/java/org/apache/kafka/streams/state/internals/StateStoreProvider.java) interface to get access to the underlying instances of your store. `StateStoreProvider#stores(String storeName, QueryableStoreType<T> queryableStoreType)` returns a `List` of state stores with the given storeName and of the type as defined by `queryableStoreType`.
 
 Here is an example implementation of the wrapper:
     
@@ -374,7 +386,7 @@ For example, you have a Kafka Streams application that processes user events in 
 
 
 
-![](/42/images/streams-interactive-queries-api-02.png)
+![](/43/images/streams-interactive-queries-api-02.png)
 
 Discover any running instances of the same application as well as the respective RPC endpoints they expose for interactive queries
 

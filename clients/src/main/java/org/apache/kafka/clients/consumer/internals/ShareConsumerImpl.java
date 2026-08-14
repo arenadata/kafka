@@ -263,7 +263,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
             this.metrics = createMetrics(config, time, reporters);
             this.asyncConsumerMetrics = new AsyncConsumerMetrics(metrics, CONSUMER_SHARE_METRIC_GROUP);
 
-            this.acknowledgementMode = initializeAcknowledgementMode(config, log);
+            this.acknowledgementMode = initializeAcknowledgementMode(config);
             this.deserializers = new Deserializers<>(config, keyDeserializer, valueDeserializer, metrics);
             this.currentFetch = ShareFetch.empty();
             this.subscriptions = createSubscriptionState(config, logContext);
@@ -380,7 +380,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
         this.metadata = metadata;
         this.requestTimeoutMs = config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG);
         this.defaultApiTimeoutMs = config.getInt(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG);
-        this.acknowledgementMode = initializeAcknowledgementMode(config, log);
+        this.acknowledgementMode = initializeAcknowledgementMode(config);
         this.fetchBuffer = new ShareFetchBuffer(logContext);
         this.completedAcknowledgements = new LinkedList<>();
 
@@ -491,7 +491,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
         this.applicationEventHandler = applicationEventHandler;
         this.kafkaShareConsumerMetrics = new KafkaShareConsumerMetrics(metrics);
         this.clientTelemetryReporter = Optional.empty();
-        this.completedAcknowledgements = Collections.emptyList();
+        this.completedAcknowledgements = List.of();
         this.asyncConsumerMetrics = new AsyncConsumerMetrics(metrics, CONSUMER_SHARE_METRIC_GROUP);
         this.acknowledgementEventHandler = new ShareAcknowledgementEventHandler(acknowledgementEventQueue);
         this.backgroundEventHandler = new BackgroundEventHandler(
@@ -533,7 +533,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
     public Set<String> subscription() {
         acquireAndEnsureOpen();
         try {
-            return Collections.unmodifiableSet(subscriptions.subscription());
+            return Set.copyOf(subscriptions.subscription());
         } finally {
             release();
         }
@@ -723,7 +723,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
             wakeupTrigger.clearTask();
         }
 
-        return collect(Collections.emptyMap());
+        return collect(Map.of());
     }
 
     private ShareFetch<K, V> collect(Map<TopicIdPartition, NodeAcknowledgements> acknowledgementsMap) {
@@ -845,7 +845,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
             Timer requestTimer = time.timer(timeout.toMillis());
             Map<TopicIdPartition, NodeAcknowledgements> acknowledgementsMap = acknowledgementsToSend();
             if (acknowledgementsMap.isEmpty()) {
-                return Collections.emptyMap();
+                return Map.of();
             } else {
                 ShareAcknowledgeSyncEvent event = new ShareAcknowledgeSyncEvent(acknowledgementsMap, calculateDeadlineMs(requestTimer));
                 applicationEventHandler.add(event);
@@ -1228,7 +1228,7 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
     /**
      * Initializes the acknowledgement mode based on the configuration.
      */
-    private static ShareAcknowledgementMode initializeAcknowledgementMode(ConsumerConfig config, Logger log) {
+    private static ShareAcknowledgementMode initializeAcknowledgementMode(ConsumerConfig config) {
         String s = config.getString(ConsumerConfig.SHARE_ACKNOWLEDGEMENT_MODE_CONFIG);
         return ShareAcknowledgementMode.fromString(s);
     }
@@ -1271,8 +1271,6 @@ public class ShareConsumerImpl<K, V> implements ShareConsumerDelegate<K, V> {
      * It is possible that {@link ErrorEvent an error} could occur when processing the events. In such
      * cases, the processor will take a reference to the first error, continue to process the remaining
      * events, and then throw the first error that occurred.
-     *
-     * Visible for testing.
      */
     boolean processBackgroundEvents() {
         AtomicReference<KafkaException> firstError = new AtomicReference<>();

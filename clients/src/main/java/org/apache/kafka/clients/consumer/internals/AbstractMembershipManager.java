@@ -245,6 +245,7 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
 
         log.info("Member {} with epoch {} transitioned from {} to {}.", memberId, memberEpoch, state, nextState);
         this.state = nextState;
+        stateUpdatesListeners.forEach(listener -> listener.onMemberStateChange(nextState));
     }
 
     private static boolean isCompletingRebalance(MemberState currentState, MemberState nextState) {
@@ -503,20 +504,6 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
         }
         currentAssignment = LocalAssignment.NONE;
         clearPendingAssignmentsAndLocalNamesCache();
-    }
-
-    /**
-     * Update a new assignment by setting the assigned partitions in the member subscription.
-     * This will mark the newly added partitions as pending callback, to prevent fetching records
-     * or updating positions for them while the callback runs.
-     *
-     * @param assignedPartitions Full assignment, to update in the subscription state
-     * @param addedPartitions    Newly added partitions
-     */
-    private void updateSubscriptionAwaitingCallback(TopicIdPartitionSet assignedPartitions,
-                                                    SortedSet<TopicPartition> addedPartitions) {
-        subscriptions.assignFromSubscribedAwaitingCallback(assignedPartitions.topicPartitions(), addedPartitions);
-        notifyAssignmentChange(assignedPartitions.topicPartitions());
     }
 
     /**
@@ -787,8 +774,9 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
      * expired poll timer. This will trigger the onPartitionsLost callback. Once the callback
      * completes, the member will remain stale until the poll timer is reset by an application
      * poll event. See {@link #maybeRejoinStaleMember()}.
+     * Visible for testing.
      */
-    private void transitionToStale() {
+    void transitionToStale() {
         transitionTo(MemberState.STALE);
 
         // Release assignment
@@ -1197,12 +1185,11 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
             TopicIdPartitionSet assignedPartitions,
             SortedSet<TopicPartition> addedPartitions) {
 
-        // Update assignment in the subscription state, and ensure that no fetching or positions
-        // initialization happens for the newly added partitions while the callback runs.
-        updateSubscriptionAwaitingCallback(assignedPartitions, addedPartitions);
+        // Signal that new partitions have been reconciled so that type-specific actions can be taken.
+        // - ShareMembershipManager: updates subscription immediately and returns completed future
+        // - ConsumerMembershipManager: enqueues event for app thread to apply assignment within poll() and run callbacks
+        CompletableFuture<Void> result = signalPartitionsAssigned(assignedPartitions, addedPartitions);
 
-        // Invoke user call back.
-        CompletableFuture<Void> result = signalPartitionsAssigned(addedPartitions);
         // Enable newly added partitions to start fetching and updating positions for them.
         result.whenComplete((__, exception) -> {
             if (exception == null) {
@@ -1217,7 +1204,7 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
                 // Keeping newly added partitions as non-fetchable after the callback failure.
                 // They will be retried on the next reconciliation loop, until it succeeds or the
                 // broker removes them from the assignment.
-                if (!addedPartitions.isEmpty()) {
+                if (!addedPartitions.isEmpty() && subscriptions.assignedPartitions().containsAll(addedPartitions)) {
                     log.warn("Leaving newly assigned partitions {} marked as non-fetchable and not " +
                             "requiring initializing positions after onPartitionsAssigned callback failed.",
                         addedPartitions, exception);
@@ -1235,10 +1222,12 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
     /**
      * Signals to the membership manager that partitions are being assigned so that actions
      * specific to the group type can be taken.
+     *
+     * @param assignedPartitions The full assignment to apply
+     * @param addedPartitions The newly added partitions (used for callback and subscription update)
      */
-    public CompletableFuture<Void> signalPartitionsAssigned(Set<TopicPartition> partitionsAssigned) {
-        return CompletableFuture.completedFuture(null);
-    }
+    protected abstract CompletableFuture<Void> signalPartitionsAssigned(TopicIdPartitionSet assignedPartitions,
+                                                                        SortedSet<TopicPartition> addedPartitions);
 
     /**
      * Signals to the membership manager that partitions are being revoked so that actions
@@ -1264,7 +1253,7 @@ public abstract class AbstractMembershipManager<R extends AbstractResponse> impl
      *     <li>Previous in-flight fetch requests that may complete while the partitions are being revoked won't be processed.</li>
      * </ul>
      */
-    private void markPendingRevocationToPauseFetching(Set<TopicPartition> partitionsToRevoke) {
+    protected void markPendingRevocationToPauseFetching(Set<TopicPartition> partitionsToRevoke) {
         // When asynchronously committing offsets prior to the revocation of a set of partitions, there will be a
         // window of time between when the offset commit is sent and when it returns and revocation completes. It is
         // possible for pending fetches for these partitions to return during this time, which means the application's

@@ -63,12 +63,12 @@ import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.network.NetworkReceive;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.CompressionRatioEstimator;
-import org.apache.kafka.common.record.CompressionType;
-import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.record.MutableRecordBatch;
-import org.apache.kafka.common.record.Record;
-import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.internal.CompressionRatioEstimator;
+import org.apache.kafka.common.record.internal.CompressionType;
+import org.apache.kafka.common.record.internal.MemoryRecords;
+import org.apache.kafka.common.record.internal.MutableRecordBatch;
+import org.apache.kafka.common.record.internal.Record;
+import org.apache.kafka.common.record.internal.RecordBatch;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.AddPartitionsToTxnResponse;
 import org.apache.kafka.common.requests.ApiVersionsResponse;
@@ -164,6 +164,7 @@ public class SenderTest {
             TOPIC_NAME, TOPIC_ID,
             "testSplitBatchAndSend", Uuid.fromString("2J9hK8m1wHMKjXfIkQyXx1")
     );
+    private static final String SENDER_TIMEOUT_MSG = "The request has not been sent, or no server response has been received yet.";
     private final TopicPartition tp0 = new TopicPartition(TOPIC_NAME, 0);
     private final TopicPartition tp1 = new TopicPartition(TOPIC_NAME, 1);
     private final TopicPartition tp2 = new TopicPartition(TOPIC_NAME, 2);
@@ -426,6 +427,7 @@ public class SenderTest {
             @Override
             public void onCompletion(RecordMetadata metadata, Exception exception) {
                 if (exception instanceof TimeoutException) {
+                    assertTrue(exception.getMessage().contains(SENDER_TIMEOUT_MSG));
                     expiryCallbackCount.incrementAndGet();
                     try {
                         accumulator.append(tp1.topic(), tp1.partition(), 0L, key, value,
@@ -2805,7 +2807,7 @@ public class SenderTest {
             runUntil(sender, txnManager::isReady);
 
             assertTrue(commitResult.isSuccessful());
-            commitResult.await();
+            commitResult.await(Long.MAX_VALUE, TimeUnit.MILLISECONDS, "Unexpected Timed out for transaction commit to completed during the test.");
 
             // Finally, we want to assert that the linger time is still effective
             // when the new transaction begins.
@@ -2955,8 +2957,9 @@ public class SenderTest {
 
             sender.forceClose();
             sender.run();
-            assertThrows(KafkaException.class, commitResult::await,
-                "The test expected to throw a KafkaException for forcefully closing the sender");
+            assertThrows(KafkaException.class, () -> commitResult.await(Long.MAX_VALUE, TimeUnit.MILLISECONDS,
+                "The test expected to throw a KafkaException for forcefully closing the sender")
+            );
         } finally {
             m.close();
         }
@@ -3167,7 +3170,7 @@ public class SenderTest {
         assertTrue(txnManager::isReady);
 
         assertTrue(result.isSuccessful());
-        result.await();
+        result.await(Long.MAX_VALUE, TimeUnit.MILLISECONDS, "Unexpected time out during the test.");
 
         txnManager.beginTransaction();
     }
@@ -3206,7 +3209,7 @@ public class SenderTest {
         assertTrue(txnManager::isReady);
 
         assertTrue(result.isSuccessful());
-        result.await();
+        result.await(Long.MAX_VALUE, TimeUnit.MILLISECONDS, "Unexpected time out during the test.");
 
         txnManager.beginTransaction();
     }
@@ -3245,7 +3248,7 @@ public class SenderTest {
         assertTrue(txnManager::isReady);
 
         assertTrue(result.isSuccessful());
-        result.await();
+        result.await(Long.MAX_VALUE, TimeUnit.MILLISECONDS, "Unexpected time out during the test.");
 
         txnManager.beginTransaction();
     }
@@ -3277,7 +3280,7 @@ public class SenderTest {
         TransactionalRequestResult commitResult = transactionManager.beginCommit();
         sender.runOnce();
         try {
-            commitResult.await(1000, TimeUnit.MILLISECONDS);
+            commitResult.await(1000, TimeUnit.MILLISECONDS, "Unexpected time out during the test.");
             fail("Expected abortable error to be thrown for commit");
         } catch (KafkaException e) {
             assertTrue(transactionManager.hasAbortableError());
@@ -3294,7 +3297,7 @@ public class SenderTest {
 
         // Verify the error is converted to KafkaException (not TransactionAbortableException)
         try {
-            abortResult.await(1000, TimeUnit.MILLISECONDS);
+            abortResult.await(1000, TimeUnit.MILLISECONDS, "Unexpected time out during the test.");
             fail("Expected KafkaException to be thrown");
         } catch (KafkaException e) {
             // Verify TM is in FATAL_ERROR state
@@ -3929,7 +3932,7 @@ public class SenderTest {
         prepareInitProducerResponse(Errors.NONE, producerIdAndEpoch.producerId, producerIdAndEpoch.epoch);
         sender.runOnce();
         assertTrue(transactionManager.hasProducerId());
-        result.await();
+        result.await(Long.MAX_VALUE, TimeUnit.MILLISECONDS, "Unexpected time out during the test.");
     }
 
     private void prepareFindCoordinatorResponse(Errors error, String txnid) {

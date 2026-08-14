@@ -76,9 +76,9 @@ import org.apache.kafka.common.metrics.stats.Avg;
 import org.apache.kafka.common.network.Selectable;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.MemoryRecords;
-import org.apache.kafka.common.record.MemoryRecordsBuilder;
 import org.apache.kafka.common.record.TimestampType;
+import org.apache.kafka.common.record.internal.MemoryRecords;
+import org.apache.kafka.common.record.internal.MemoryRecordsBuilder;
 import org.apache.kafka.common.requests.AbstractResponse;
 import org.apache.kafka.common.requests.FetchRequest;
 import org.apache.kafka.common.requests.FetchResponse;
@@ -113,6 +113,7 @@ import org.apache.kafka.test.TestUtils;
 
 import org.apache.logging.log4j.Level;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -566,6 +567,72 @@ public class KafkaConsumerTest {
 
         assertEquals("Failed to construct kafka consumer", e.getMessage());
         assertEquals("Class an.invalid.class cannot be found", e.getCause().getMessage());
+    }
+
+    @Test
+    public void testClassicProtocolLogsRecommendationToTryConsumerProtocol() {
+        Properties props = new Properties();
+        props.setProperty(ConsumerConfig.GROUP_PROTOCOL_CONFIG, GroupProtocol.CLASSIC.name());
+        props.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9999");
+        props.setProperty(ConsumerConfig.GROUP_ID_CONFIG, "test-group");
+
+        try (LogCaptureAppender appender = LogCaptureAppender.createAndRegister()) {
+            appender.setClassLogger(ClassicKafkaConsumer.class, Level.INFO);
+            consumer = newConsumer(props, new StringDeserializer(), new StringDeserializer());
+            assertTrue(
+                    appender.getMessages().stream().anyMatch(m -> m.contains("The consumer rebalance protocol (KIP-848) is production-ready!")),
+                    "Log message about consumer protocol not showing as expected when starting a consumer using the classic protocol"
+            );
+        }
+    }
+
+    @Test
+    public void testConsumerProtocolDoesNotLogRecommendation() {
+        Properties props = new Properties();
+        props.setProperty(ConsumerConfig.GROUP_PROTOCOL_CONFIG, GroupProtocol.CONSUMER.name());
+        props.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9999");
+        props.setProperty(ConsumerConfig.GROUP_ID_CONFIG, "test-group");
+
+        try (LogCaptureAppender appender = LogCaptureAppender.createAndRegister()) {
+            appender.setClassLogger(ClassicKafkaConsumer.class, Level.INFO);
+            consumer = newConsumer(props, new StringDeserializer(), new StringDeserializer());
+            assertFalse(
+                    appender.getMessages().stream().anyMatch(m -> m.contains("The consumer rebalance protocol (KIP-848) is production-ready!")),
+                    "Should not log recommendation when already using consumer protocol"
+            );
+        }
+    }
+
+    @Test
+    public void testDefaultProtocolLogsRecommendationToTryConsumerProtocol() {
+        Properties props = new Properties();
+        props.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9999");
+        props.setProperty(ConsumerConfig.GROUP_ID_CONFIG, "test-group");
+
+        try (LogCaptureAppender appender = LogCaptureAppender.createAndRegister()) {
+            appender.setClassLogger(ClassicKafkaConsumer.class, Level.INFO);
+            consumer = newConsumer(props, new StringDeserializer(), new StringDeserializer());
+            assertTrue(
+                    appender.getMessages().stream().anyMatch(m -> m.contains("The consumer rebalance protocol (KIP-848) is production-ready!")),
+                    "Log message about consumer protocol not showing as expected when starting a consumer using the default (classic) protocol"
+            );
+        }
+    }
+
+    @Test
+    public void testNoGroupIdDoesNotLogGroupProtocolMessage() {
+        Properties props = new Properties();
+        props.setProperty(ConsumerConfig.GROUP_PROTOCOL_CONFIG, GroupProtocol.CLASSIC.name());
+        props.setProperty(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9999");
+
+        try (LogCaptureAppender appender = LogCaptureAppender.createAndRegister()) {
+            appender.setClassLogger(ClassicKafkaConsumer.class, Level.INFO);
+            consumer = newConsumer(props, new StringDeserializer(), new StringDeserializer());
+            assertFalse(
+                    appender.getMessages().stream().anyMatch(m -> m.contains("The consumer rebalance protocol (KIP-848) is production ready!")),
+                    "Should not log recommendation when no group.id is set"
+            );
+        }
     }
 
     @ParameterizedTest
@@ -1284,7 +1351,7 @@ public class KafkaConsumerTest {
         Node coordinator = new Node(Integer.MAX_VALUE - node.id(), node.host(), node.port());
 
         // fetch offset for one topic
-        client.prepareResponseFrom(offsetResponse(Utils.mkMap(Utils.mkEntry(tp0, offset1), Utils.mkEntry(tp1, -1L)), Errors.NONE), coordinator);
+        client.prepareResponseFrom(offsetResponse(Map.of(tp0, offset1, tp1, -1L), Errors.NONE), coordinator);
         final Map<TopicPartition, OffsetAndMetadata> committed = consumer.committed(Set.of(tp0, tp1));
         assertEquals(2, committed.size());
         assertEquals(offset1, committed.get(tp0).offset());
@@ -2467,7 +2534,7 @@ public class KafkaConsumerTest {
         ConsumerPartitionAssignor assignor = new CooperativeStickyAssignor();
         KafkaConsumer<String, String> consumer = newConsumer(groupProtocol, time, client, subscription, metadata, assignor, true, groupInstanceId);
 
-        initMetadata(client, Utils.mkMap(Utils.mkEntry(topic, 1), Utils.mkEntry(topic2, 1), Utils.mkEntry(topic3, 1)));
+        initMetadata(client, Map.of(topic, 1, topic2, 1, topic3, 1));
 
         consumer.subscribe(Arrays.asList(topic, topic2), getConsumerRebalanceListener(consumer));
 
@@ -3512,7 +3579,7 @@ public void testPollIdleRatio(GroupProtocol groupProtocol) {
         MockClient client = new MockClient(time, metadata);
         KafkaConsumer<String, String> consumer = newConsumer(groupProtocol, time, client, subscription, metadata, assignor, true, groupInstanceId);
         MockRebalanceListener countingRebalanceListener = new MockRebalanceListener();
-        initMetadata(client, Utils.mkMap(Utils.mkEntry(topic, 1), Utils.mkEntry(topic2, 1), Utils.mkEntry(topic3, 1)));
+        initMetadata(client, Map.of(topic, 1, topic2, 1, topic3, 1));
 
         consumer.subscribe(Arrays.asList(topic, topic2), countingRebalanceListener);
         Node node = metadata.fetch().nodes().get(0);
@@ -3542,7 +3609,7 @@ public void testPollIdleRatio(GroupProtocol groupProtocol) {
 
         ConsumerMetadata metadata = createMetadata(subscription);
         MockClient client = new MockClient(time, metadata);
-        initMetadata(client, Utils.mkMap(Utils.mkEntry(topic, 1)));
+        initMetadata(client, Map.of(topic, 1));
         Node node = metadata.fetch().nodes().get(0);
 
         consumer = newConsumer(

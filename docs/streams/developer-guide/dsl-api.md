@@ -925,6 +925,16 @@ Stateful transformations depend on state for processing inputs and producing out
 
 
 
+**Headers-aware state stores ([KIP-1285](https://cwiki.apache.org/confluence/x/4ow8G)):** Set [`dsl.store.format=HEADERS`](config-streams.html#dsl-store-format) to make supported DSL operators use headers-aware state stores. These stores can keep record headers together with the value and timestamp.
+
+This config only changes the state store format. It does not define how DSL operators create headers for output records. Current behavior is:
+
+  * aggregations, KTable-KTable joins, materialized `KTable.mapValues`, `KStream.toTable()`, and `StreamsBuilder.table()` write empty headers to their materialized stores
+  * KStream-KStream join window stores keep source-record headers, but join result records do not get computed or merged headers; they may carry the headers from the record that triggered the result
+  * `suppress()` and left/outer [KStream-KStream joins](#kstream-kstream-join) use non-headers-aware buffer stores, so records passing through those buffers lose their headers
+
+A follow-up KIP will define how DSL result headers are computed.
+
 Note, that state stores are fault-tolerant. In case of failure, Kafka Streams guarantees to fully restore all state stores prior to resuming the processing. See [Fault Tolerance](../architecture.html#streams_architecture_recovery) for further information.
 
 Available stateful transformations in the DSL include:
@@ -938,7 +948,7 @@ Available stateful transformations in the DSL include:
 
 The following diagram shows their relationships:
 
-![](/42/images/streams-stateful_operations.png)
+![](/43/images/streams-stateful_operations.png)
 
 Stateful transformations in the DSL.
 
@@ -2113,9 +2123,13 @@ There are two exceptions where co-partitioning is not required. For KStream-Glob
 
 
 
-#### KStream-KStream Join
+#### KStream-KStream Join {#kstream-kstream-join}
 
-KStream-KStream joins are always windowed joins, because otherwise the size of the internal state store used to perform the join - e.g., a sliding window or "buffer" - would grow indefinitely. For stream-stream joins it's important to highlight that a new input record on one side will produce a join output _for each_ matching record on the other side, and there can be _multiple_ such matching records in a given join window (cf. the row with timestamp 15 in the join semantics table below, for example).
+KStream-KStream joins are always windowed joins, because otherwise the size of the internal state store used to perform the join - e.g., a sliding window or "buffer" - would grow indefinitely.
+
+**Note on headers-aware state stores:** With [`dsl.store.format=HEADERS`](config-streams.html#dsl-store-format), inner stream-stream joins use headers-aware join window stores. Left and outer stream-stream joins also use a separate buffer store for not-yet-matched records, and that buffer is not headers-aware. Records that pass through this buffer lose their headers.
+
+Join output records do not get computed or merged headers. The current forwarding path may carry the headers from the record that triggered the output. For stream-stream joins it's important to highlight that a new input record on one side will produce a join output _for each_ matching record on the other side, and there can be _multiple_ such matching records in a given join window (cf. the row with timestamp 15 in the join semantics table below, for example).
 
 Join output records are effectively created as follows, leveraging the user-supplied `ValueJoiner`:
     
@@ -4539,7 +4553,7 @@ The following code defines a hopping window with a size of 5 minutes and an adva
     Duration advance = Duration.ofMinutes(1);
     TimeWindows.ofSizeWithNoGrace(windowSize).advanceBy(advance);
 
-![](/42/images/streams-time-windows-hopping.png)
+![](/43/images/streams-time-windows-hopping.png)
 
 This diagram shows windowing a stream of data records with hopping windows. In this diagram the time numbers represent minutes; e.g. t=5 means "at the five-minute mark". In reality, the unit of time in Kafka Streams is milliseconds, which means the time numbers would need to be multiplied with 60 * 1,000 to convert from minutes to milliseconds (e.g. t=5 would become t=300,000).
 
@@ -4551,7 +4565,7 @@ Unlike non-windowed aggregates that we have seen previously, windowed aggregates
 
 Tumbling time windows are a special case of hopping time windows and, like the latter, are windows based on time intervals. They model fixed-size, non-overlapping, gap-less windows. A tumbling window is defined by a single property: the window's _size_. A tumbling window is a hopping window whose window size is equal to its advance interval. Since tumbling windows never overlap, a data record will belong to one and only one window.
 
-![](/42/images/streams-time-windows-tumbling.png)
+![](/43/images/streams-time-windows-tumbling.png)
 
 This diagram shows windowing a stream of data records with tumbling windows. Windows do not overlap because, by definition, the advance interval is identical to the window size. In this diagram the time numbers represent minutes; e.g. t=5 means "at the five-minute mark". In reality, the unit of time in Kafka Streams is milliseconds, which means the time numbers would need to be multiplied with 60 * 1,000 to convert from minutes to milliseconds (e.g. t=5 would become t=300,000).
 
@@ -4588,7 +4602,7 @@ The following code defines a sliding window with a time difference of 10 minutes
     Duration gracePeriod = Duration.ofMinutes(30);
     SlidingWindows.ofTimeDifferenceAndGrace(timeDifference, gracePeriod);
 
-![](/42/images/streams-sliding-windows.png)
+![](/43/images/streams-sliding-windows.png)
 
 This diagram shows windowing a stream of data records with sliding windows. The overlap of the sliding window snapshots varies depending on the record times. In this diagram, the time numbers represent milliseconds. For example, t=5 means "at the five millisecond mark".
 
@@ -4618,17 +4632,17 @@ The following code defines a session window with an inactivity gap of 5 minutes:
 
 Given the previous session window example, here's what would happen on an input stream of six records. When the first three records arrive (upper part of in the diagram below), we'd have three sessions (see lower part) after having processed those records: two for the green record key, with one session starting and ending at the 0-minute mark (only due to the illustration it looks as if the session goes from 0 to 1), and another starting and ending at the 6-minute mark; and one session for the blue record key, starting and ending at the 2-minute mark.
 
-![](/42/images/streams-session-windows-01.png)
+![](/43/images/streams-session-windows-01.png)
 
 Detected sessions after having received three input records: two records for the green record key at t=0 and t=6, and one record for the blue record key at t=2. In this diagram the time numbers represent minutes; e.g. t=5 means "at the five-minute mark". In reality, the unit of time in Kafka Streams is milliseconds, which means the time numbers would need to be multiplied with 60 * 1,000 to convert from minutes to milliseconds (e.g. t=5 would become t=300,000).
 
 If we then receive three additional records (including two out-of-order records), what would happen is that the two existing sessions for the green record key will be merged into a single session starting at time 0 and ending at time 6, consisting of a total of three records. The existing session for the blue record key will be extended to end at time 5, consisting of a total of two records. And, finally, there will be a new session for the blue key starting and ending at time 11.
 
-![](/42/images/streams-session-windows-02.png)
+![](/43/images/streams-session-windows-02.png)
 
 Detected sessions after having received six input records. Note the two out-of-order data records at t=4 (green) and t=5 (blue), which lead to a merge of sessions and an extension of a session, respectively.
 
-#### Window Final Results
+#### Window Final Results {#window-final-results}
 
 In Kafka Streams, windowed computations update their results continuously. As new data arrives for a window, freshly computed results are emitted downstream. For many applications, this is ideal, since fresh results are always available. and Kafka Streams is designed to make programming continuous computations seamless. However, some applications need to take action **only** on the final result of a windowed computation. Common examples of this are sending alerts or delivering results to a system that doesn't support updates. 
 
@@ -4658,6 +4672,8 @@ The key parts of this program are:
      This configures the buffer used for storing events until their windows close. Production code is able to put a cap on the amount of memory to use for the buffer, but this simple example creates a buffer with no upper bound. 
 
 One thing to note is that suppression is just like any other Kafka Streams operator, so you can build a topology with two branches emerging from the `count`, one suppressed, and one not, or even multiple differently configured suppressions. This allows you to apply suppressions where they are needed and otherwise rely on the default continuous update behavior. 
+
+**Note on headers-aware state stores:** `suppress()` uses an in-memory buffer that is not headers-aware. Record headers attached to upstream records are not preserved across the suppression boundary, even when [`dsl.store.format=HEADERS`](config-streams.html#dsl-store-format) is set globally per [KIP-1285](https://cwiki.apache.org/confluence/x/4ow8G).
 
 For more detailed information, see the JavaDoc on the `Suppressed` config object and [KIP-328](https://cwiki.apache.org/confluence/x/sQU0BQ "KIP-328"). 
 
@@ -5633,11 +5649,11 @@ For more detailed information, see the JavaDoc on the `Suppressed` config object
 
 # Using timestamp-based semantics for table processors
 
-By default, tables in Kafka Streams use offset-based semantics. When multiple records arrive for the same key, the one with the largest record offset is considered the latest record for the key, and is the record that appears in aggregation and join results computed on the table. This is true even in the event of [out-of-order data](/42/documentation/streams/core-concepts.html#streams_out_of_ordering). The record with the largest offset is considered to be the latest record for the key, even if this record does not have the largest timestamp.
+By default, tables in Kafka Streams use offset-based semantics. When multiple records arrive for the same key, the one with the largest record offset is considered the latest record for the key, and is the record that appears in aggregation and join results computed on the table. This is true even in the event of [out-of-order data](/43/documentation/streams/core-concepts.html#streams_out_of_ordering). The record with the largest offset is considered to be the latest record for the key, even if this record does not have the largest timestamp.
 
 An alternative to offset-based semantics is timestamp-based semantics. With timestamp-based semantics, the record with the largest timestamp is considered the latest record, even if there is another record with a larger offset (and smaller timestamp). If there is no out-of-order data (per key), then offset-based semantics and timestamp-based semantics are equivalent; the difference only appears when there is out-of-order data.
 
-Starting with Kafka Streams 3.5, Kafka Streams supports timestamp-based semantics through the use of [versioned state stores](/42/documentation/streams/developer-guide/processor-api.html#versioned-state-stores). When a table is materialized with a versioned state store, it is a versioned table and will result in different processor semantics in the presence of out-of-order data.
+Starting with Kafka Streams 3.5, Kafka Streams supports timestamp-based semantics through the use of [versioned state stores](/43/documentation/streams/developer-guide/processor-api.html#versioned-state-stores). When a table is materialized with a versioned state store, it is a versioned table and will result in different processor semantics in the presence of out-of-order data.
 
   * When performing a stream-table join, stream-side records will join with the latest-by-timestamp table record which has a timestamp less than or equal to the stream record's timestamp. This is in contrast to joining a stream to an unversioned table, in which case the latest-by-offset table record will be joined, even if the stream-side record is out-of-order and has a lower timestamp.
   * Aggregations computed on the table will include the latest-by-timestamp record for each key, instead of the latest-by-offset record. Out-of-order updates (per key) will not trigger a new aggregation result. This is true for `count` and `reduce` operations as well, in addition to `aggregate` operations.
@@ -5662,7 +5678,7 @@ The results of certain processors should not be materialized with versioned stor
 
 
 
-For more on versioned stores and how to start using them in your application, see [here](/42/documentation/streams/developer-guide/processor-api.html#versioned-state-stores).
+For more on versioned stores and how to start using them in your application, see [here](/43/documentation/streams/developer-guide/processor-api.html#versioned-state-stores).
 
 # Writing streams back to Kafka
 
@@ -5738,6 +5754,12 @@ Kafka Streams comes with a `test-utils` module to help you test your application
 
 # Kafka Streams DSL for Scala
 
+> **⚠️ DEPRECATION NOTICE**: The Kafka Streams DSL for Scala library (`kafka-streams-scala`) is
+> **deprecated as of Kafka 4.3** and will be **removed in Kafka 5.0**.
+>
+> **See the [migration guide](/{version}/streams/developer-guide/scala-migration)** for instructions
+> and code examples showing how to migrate from the Scala wrapper to the Java API.
+
 The Kafka Streams DSL Java APIs are based on the Builder design pattern, which allows users to incrementally build the target functionality using lower level compositional fluent APIs. These APIs can be called from Scala, but there are several issues:
 
   1. **Additional type annotations** \- The Java APIs use Java generics in a way that are not fully compatible with the type inferencer of the Scala compiler. Hence the user has to add type annotations to the Scala code, which seems rather non-idiomatic in Scala.
@@ -5785,7 +5807,7 @@ The library is cross-built with Scala 2.12 and 2.13. To reference the library co
     <dependency>
       <groupId>org.apache.kafka</groupId>
       <artifactId>kafka-streams-scala_2.13</artifactId>
-      <version>4.2.0</version>
+      <version>4.3.0</version>
     </dependency>
 
 To use the library compiled against Scala 2.12 replace the `artifactId` with `kafka-streams-scala_2.12`.
@@ -5793,7 +5815,7 @@ To use the library compiled against Scala 2.12 replace the `artifactId` with `ka
 When using SBT then you can reference the correct library using the following:
     
     
-    libraryDependencies += "org.apache.kafka" %% "kafka-streams-scala" % "4.2.0"
+    libraryDependencies += "org.apache.kafka" %% "kafka-streams-scala" % "4.3.0"
 
 ## Sample Usage
 
@@ -5928,5 +5950,3 @@ A complete example of user-defined Serdes can be found in a test class within th
   * [Documentation](/documentation)
   * [Kafka Streams](/documentation/streams)
   * [Developer Guide](/documentation/streams/developer-guide/)
-
-

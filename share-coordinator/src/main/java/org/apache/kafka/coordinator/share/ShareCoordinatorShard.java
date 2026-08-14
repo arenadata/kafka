@@ -123,7 +123,7 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         }
 
         @Override
-        public CoordinatorShardBuilder<ShareCoordinatorShard, CoordinatorRecord> withTimer(CoordinatorTimer<Void, CoordinatorRecord> timer) {
+        public CoordinatorShardBuilder<ShareCoordinatorShard, CoordinatorRecord> withTimer(CoordinatorTimer<CoordinatorRecord> timer) {
             // method is required due to interface
             return this;
         }
@@ -212,7 +212,7 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
     }
 
     @Override
-    public void onNewMetadataImage(CoordinatorMetadataImage newImage, CoordinatorMetadataDelta delta) {
+    public void onMetadataUpdate(CoordinatorMetadataDelta delta, CoordinatorMetadataImage newImage) {
         this.metadataImage = newImage;
     }
 
@@ -812,7 +812,7 @@ public class ShareCoordinatorShard implements CoordinatorShard<CoordinatorRecord
                 topicId, partitionId, Errors.INVALID_REQUEST, READ_UNINITIALIZED_SHARE_PARTITION.getMessage()));
         }
 
-        if (leaderEpochMap.containsKey(mapKey) && leaderEpochMap.get(mapKey) > partitionData.leaderEpoch()) {
+        if (partitionData.leaderEpoch() != -1 && leaderEpochMap.containsKey(mapKey) && leaderEpochMap.get(mapKey) > partitionData.leaderEpoch()) {
             log.error("Read request leader epoch is smaller than last recorded current: {}, requested: {}.", leaderEpochMap.get(mapKey), partitionData.leaderEpoch());
             return Optional.of(ReadShareGroupStateResponse.toErrorResponseData(topicId, partitionId, Errors.FENCED_LEADER_EPOCH, Errors.FENCED_LEADER_EPOCH.message()));
         }

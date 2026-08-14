@@ -18,13 +18,17 @@ package org.apache.kafka.streams.processor.internals;
 
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.utils.LogCaptureAppender;
+import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.streams.StreamsConfig;
+import org.apache.kafka.streams.TopologyConfig;
 import org.apache.kafka.streams.errors.ProcessorStateException;
+import org.apache.kafka.streams.processor.StateStore;
 import org.apache.kafka.streams.processor.TaskId;
 import org.apache.kafka.streams.processor.internals.StateDirectory.TaskDirectory;
 import org.apache.kafka.streams.state.internals.OffsetCheckpoint;
+import org.apache.kafka.test.MockKeyValueStore;
 import org.apache.kafka.test.TestUtils;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -33,6 +37,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.mockito.Mockito;
 
 import java.io.BufferedWriter;
 import java.io.File;
@@ -88,6 +94,7 @@ public class StateDirectoryTest {
     private final MockTime time = new MockTime();
     private File stateDir;
     private final String applicationId = "applicationId";
+    private StreamsConfig config;
     private StateDirectory directory;
     private File appDir;
 
@@ -104,14 +111,13 @@ public class StateDirectoryTest {
         if (!createStateDirectory) {
             cleanup();
         }
-        directory = new StateDirectory(
-            new StreamsConfig(Map.of(
-                    StreamsConfig.APPLICATION_ID_CONFIG, applicationId,
-                    StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy:1234",
-                    StreamsConfig.STATE_DIR_CONFIG, stateDir.getPath(),
+        config = new StreamsConfig(Map.of(
+                StreamsConfig.APPLICATION_ID_CONFIG, applicationId,
+                StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy:1234",
+                StreamsConfig.STATE_DIR_CONFIG, stateDir.getPath(),
                 StreamsConfig.ALLOW_OS_GROUP_WRITE_ACCESS_CONFIG, allowOsGroupWriteAccess
-            )),
-            time, createStateDirectory, hasNamedTopology);
+        ));
+        directory = new StateDirectory(config, time, createStateDirectory, hasNamedTopology);
         appDir = new File(stateDir, applicationId);
     }
 
@@ -843,6 +849,141 @@ public class StateDirectoryTest {
         mapper.writeValue(processFile, new FutureStateDirectoryProcessFile(processId, "some random junk"));
 
         assertThat(directory.initializeProcessId(), equalTo(processId));
+    }
+
+    @Test
+    public void shouldNotInitializeStartupStateWhenNoLocalState() {
+        final TaskId taskId = new TaskId(0, 0);
+        initializeStartupStores(new TaskId(0, 0), false);
+        assertFalse(directory.hasStartupTasks());
+        assertFalse(directory.removeStartupState(taskId));
+        assertFalse(directory.hasStartupTasks());
+    }
+
+    @Test
+    public void shouldInitializeStartupStateForLocalState() {
+        final TaskId taskId = new TaskId(0, 0);
+        initializeStartupStores(new TaskId(0, 0), true);
+        assertTrue(directory.hasStartupTasks());
+        assertTrue(directory.removeStartupState(taskId));
+        assertFalse(directory.hasStartupTasks());
+        assertFalse(directory.removeStartupState(taskId));
+    }
+
+    @Test
+    public void shouldNotAssignStartupStateWeDontHave() {
+        final TaskId taskId = new TaskId(0, 0);
+        initializeStartupStores(taskId, false);
+        assertFalse(directory.removeStartupState(taskId));
+    }
+
+    @Test
+    public void shouldNotHoldLockAfterInitializeStartupStores() {
+        final TaskId taskId = new TaskId(0, 0);
+        initializeStartupStores(taskId, true);
+
+        assertTrue(directory.hasStartupTasks());
+        assertNull(directory.lockOwner(taskId));
+    }
+
+    @Test
+    public void shouldUnlockStartupStateOnClose() {
+        final TaskId taskId = new TaskId(0, 0);
+        initializeStartupStores(taskId, true);
+
+        assertNull(directory.lockOwner(taskId));
+        directory.close();
+        assertNull(directory.lockOwner(taskId));
+    }
+
+    @Test
+    public void shouldCloseStartupStateOnAutoCleanUp() {
+        // we need to set this because the auto-cleanup uses the last-modified time from the filesystem,
+        // which can't be mocked
+        time.setCurrentTimeMs(System.currentTimeMillis());
+        final TaskId taskId = new TaskId(0, 0);
+
+        final StateStore store = initializeStartupStores(taskId, true);
+
+        assertTrue(directory.hasStartupTasks());
+        assertFalse(store.isOpen());
+
+        time.sleep(10000);
+        // We need to manually unlock the task because the cleanup process only
+        // cleans tasks that are no-longer owned by the current thread
+        directory.unlock(taskId);
+
+        directory.cleanRemovedTasks(1000);
+
+        assertFalse(directory.hasStartupTasks());
+        assertFalse(store.isOpen());
+    }
+
+    @Test
+    public void shouldCleanupStateDirectoriesWhenLastModifiedIsLessThanNowMinusMaxDirAge() {
+        final TaskId task0 = new TaskId(0, 0);
+        final TaskId task1 = new TaskId(1, 0);
+        final TaskId task2 = new TaskId(2, 0);
+
+        final int dirMaxAgeMs = 60000;
+        final long outdatedModifiedTime = time.milliseconds() - dirMaxAgeMs - 1000;
+
+        assertTrue(new File(directory.getOrCreateDirectoryForTask(task0), "store").mkdir());
+        assertTrue(new File(directory.getOrCreateDirectoryForTask(task1), "store").mkdir());
+        assertTrue(new File(directory.getOrCreateDirectoryForTask(task2), "store").mkdir());
+
+        final File dir0File = new File(appDir, toTaskDirString(task0));
+        dir0File.setLastModified(outdatedModifiedTime);
+        final File dir1File = new File(appDir, toTaskDirString(task1));
+        dir1File.setLastModified(outdatedModifiedTime);
+        final File dir2File = new File(appDir, toTaskDirString(task2));
+
+        final TaskDirectory dir0 = new TaskDirectory(dir0File, null);
+        final TaskDirectory dir1 = new TaskDirectory(dir1File, null);
+        final TaskDirectory dir2 = new TaskDirectory(dir2File, null);
+
+        List<TaskDirectory> files = directory.listAllTaskDirectories();
+        assertEquals(Set.of(dir0, dir1, dir2), new HashSet<>(files));
+        files = directory.listNonEmptyTaskDirectories();
+        assertEquals(Set.of(dir0, dir1, dir2), new HashSet<>(files));
+
+        directory.cleanOutdatedDirsOnStartup(dirMaxAgeMs);
+
+        files = directory.listAllTaskDirectories();
+        assertEquals(Set.of(dir2), new HashSet<>(files));
+        files = directory.listNonEmptyTaskDirectories();
+        assertEquals(Set.of(dir2), new HashSet<>(files));
+    }
+
+    private StateStore initializeStartupStores(final TaskId taskId, final boolean createTaskDir) {
+        directory.initializeProcessId();
+        final TopologyMetadata metadata = Mockito.mock(TopologyMetadata.class);
+        final TopologyConfig topologyConfig = new TopologyConfig(config);
+
+        final StateStore store = new MockKeyValueStore("test", true);
+
+        if (createTaskDir) {
+            final File taskDir = directory.getOrCreateDirectoryForTask(taskId);
+            final File storeDir = new File(taskDir, store.name());
+            storeDir.mkdir();
+        }
+
+        final ProcessorTopology processorTopology = new ProcessorTopology(
+                Collections.emptyList(),
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                Collections.singletonList(store),
+                Collections.emptyList(),
+                Collections.singletonMap(store.name(), store.name() + "-changelog"),
+                Collections.emptySet(),
+                Collections.emptyMap()
+        );
+        Mockito.when(metadata.buildSubtopology(ArgumentMatchers.any())).thenReturn(processorTopology);
+        Mockito.when(metadata.taskConfig(ArgumentMatchers.any())).thenReturn(topologyConfig.getTaskConfig());
+
+        directory.initializeStartupStores(metadata, new LogContext("test"), null);
+
+        return store;
     }
 
     private static class FutureStateDirectoryProcessFile {

@@ -30,23 +30,31 @@ import org.junit.jupiter.api.Assertions.{assertEquals, assertNotNull, assertNull
 
 import scala.jdk.CollectionConverters._
 
+object StreamsGroupHeartbeatRequestTest {
+  @ClusterTestDefaults(
+    types = Array(Type.KRAFT),
+    serverProperties = Array(
+      new ClusterConfigProperty(key = GroupCoordinatorConfig.OFFSETS_TOPIC_PARTITIONS_CONFIG, value = "1"),
+      new ClusterConfigProperty(key = GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, value = "1"),
+      new ClusterConfigProperty(key = GroupCoordinatorConfig.STREAMS_GROUP_INITIAL_REBALANCE_DELAY_MS_CONFIG, value = "0"),
+      new ClusterConfigProperty(key = GroupCoordinatorConfig.STREAMS_GROUP_ASSIGNMENT_INTERVAL_MS_CONFIG, value = "0")
+    )
+  )
+  class WithAssignmentBatchingDisabledTest(cluster: ClusterInstance) extends StreamsGroupHeartbeatRequestTest(cluster) {
+  }
+}
+
 @ClusterTestDefaults(
   types = Array(Type.KRAFT),
   serverProperties = Array(
     new ClusterConfigProperty(key = GroupCoordinatorConfig.OFFSETS_TOPIC_PARTITIONS_CONFIG, value = "1"),
     new ClusterConfigProperty(key = GroupCoordinatorConfig.OFFSETS_TOPIC_REPLICATION_FACTOR_CONFIG, value = "1"),
-    new ClusterConfigProperty(key = "unstable.api.versions.enable", value = "true"),
-    new ClusterConfigProperty(key = "group.coordinator.rebalance.protocols", value = "classic,consumer,streams"),
-    new ClusterConfigProperty(key = "group.streams.initial.rebalance.delay.ms", value = "0")
+    new ClusterConfigProperty(key = GroupCoordinatorConfig.STREAMS_GROUP_INITIAL_REBALANCE_DELAY_MS_CONFIG, value = "0")
   )
 )
 class StreamsGroupHeartbeatRequestTest(cluster: ClusterInstance) extends GroupCoordinatorBaseRequestTest(cluster) {
 
-  @ClusterTest(
-    serverProperties = Array(
-      new ClusterConfigProperty(key = GroupCoordinatorConfig.GROUP_COORDINATOR_REBALANCE_PROTOCOLS_CONFIG, value = "classic,consumer,streams"),
-    )
-  )
+  @ClusterTest
   def testStreamsGroupHeartbeatWithInvalidAPIVersion(): Unit = {
     // Test that invalid API version throws UnsupportedVersionException
     assertThrows(classOf[UnsupportedVersionException], () =>
@@ -58,9 +66,6 @@ class StreamsGroupHeartbeatRequestTest(cluster: ClusterInstance) extends GroupCo
   }
 
   @ClusterTest(
-    serverProperties = Array(
-      new ClusterConfigProperty(key = GroupCoordinatorConfig.GROUP_COORDINATOR_REBALANCE_PROTOCOLS_CONFIG, value = "classic,consumer,streams"),
-    ),
     features = Array(
       new ClusterFeature(feature = Feature.STREAMS_VERSION, version = 0)
     )
@@ -111,12 +116,8 @@ class StreamsGroupHeartbeatRequestTest(cluster: ClusterInstance) extends GroupCo
     assertEquals(expectedResponse, streamsGroupHeartbeatResponse)
   }
 
-  @ClusterTest(
-    serverProperties = Array(
-      new ClusterConfigProperty(key = GroupCoordinatorConfig.GROUP_COORDINATOR_REBALANCE_PROTOCOLS_CONFIG, value = "classic,consumer,streams"),
-    )
-  )
-  def testStreamsGroupHeartbeatIsInaccessibleWhenUnstableLatestVersionNotEnabled(): Unit = {
+  @ClusterTest
+  def testStreamsGroupHeartbeatIsInaccessibleWhenOffsetTopicNotExist(): Unit = {
     val topology = new StreamsGroupHeartbeatRequestData.Topology()
       .setEpoch(1)
       .setSubtopologies(List().asJava)
@@ -202,7 +203,8 @@ class StreamsGroupHeartbeatRequestTest(cluster: ClusterInstance) extends GroupCo
           warmupTasks = List.empty,
           topology = topology
         )
-        streamsGroupHeartbeatResponse.errorCode == Errors.NONE.code()
+        streamsGroupHeartbeatResponse.errorCode == Errors.NONE.code() &&
+          streamsGroupHeartbeatResponse.memberEpoch > 2
       }, "StreamsGroupHeartbeatRequest did not succeed within the timeout period.")
 
       // Active task assignment should be available
@@ -298,7 +300,8 @@ class StreamsGroupHeartbeatRequestTest(cluster: ClusterInstance) extends GroupCo
             .getOrElse(List.empty),
           topology = topology
         )
-        streamsGroupHeartbeatResponse2.errorCode == Errors.NONE.code()
+        streamsGroupHeartbeatResponse2.errorCode == Errors.NONE.code() &&
+          streamsGroupHeartbeatResponse2.memberEpoch > streamsGroupHeartbeatResponse1.memberEpoch()
       }, "Second StreamsGroupHeartbeatRequest did not succeed within the timeout period.")
 
       // Verify second member gets assigned
@@ -692,6 +695,7 @@ class StreamsGroupHeartbeatRequestTest(cluster: ClusterInstance) extends GroupCo
           processId = "process-2"
         )
         streamsGroupHeartbeatResponse2.errorCode == Errors.NONE.code() &&
+          streamsGroupHeartbeatResponse2.memberEpoch > streamsGroupHeartbeatResponse1.memberEpoch() &&
           streamsGroupHeartbeatResponse2.activeTasks() != null
       }, "Second StreamsGroupHeartbeatRequest did not succeed within the timeout period.")
 

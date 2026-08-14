@@ -26,7 +26,6 @@ import java.util.function.Consumer
 import kafka.network.RequestChannel
 import kafka.server.QuotaFactory.QuotaManagers
 import kafka.server.logger.RuntimeLoggerManager
-import kafka.server.metadata.KRaftMetadataCache
 import kafka.utils.Logging
 import org.apache.kafka.clients.admin.{AlterConfigOp, EndpointType}
 import org.apache.kafka.common.Uuid.ZERO_UUID
@@ -51,7 +50,7 @@ import org.apache.kafka.common.Uuid
 import org.apache.kafka.controller.ControllerRequestContext.requestTimeoutMsToDeadlineNs
 import org.apache.kafka.controller.{Controller, ControllerRequestContext}
 import org.apache.kafka.image.publisher.ControllerRegistrationsPublisher
-import org.apache.kafka.metadata.{BrokerHeartbeatReply, BrokerRegistrationReply}
+import org.apache.kafka.metadata.{BrokerHeartbeatReply, BrokerRegistrationReply, KRaftMetadataCache}
 import org.apache.kafka.common.security.auth.KafkaPrincipal
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.raft.RaftManager
@@ -371,7 +370,8 @@ class ControllerApis(
         authHelper.authorize(request.context, CREATE, CLUSTER, CLUSTER_NAME, logIfDenied = false),
         names => authHelper.filterByAuthorized(request.context, CREATE, TOPIC, names)(identity),
         names => authHelper.filterByAuthorized(request.context, DESCRIBE_CONFIGS, TOPIC,
-            names, logIfDenied = false)(identity))
+            names, logIfDenied = false)(identity),
+        request.isForwarded)
     future.handle[Unit] { (result, exception) =>
       val response = if (exception != null) {
         createTopicsRequest.getErrorResponse(exception)
@@ -393,7 +393,8 @@ class ControllerApis(
     request: CreateTopicsRequestData,
     hasClusterAuth: Boolean,
     getCreatableTopics: Iterable[String] => Set[String],
-    getDescribableTopics: Iterable[String] => Set[String]
+    getDescribableTopics: Iterable[String] => Set[String],
+    forwarded: Boolean
   ): CompletableFuture[CreateTopicsResponseData] = {
     val topicNames = new util.HashSet[String]()
     val duplicateTopicNames = new util.HashSet[String]()
@@ -423,7 +424,7 @@ class ControllerApis(
         iterator.remove()
       }
     }
-    controller.createTopics(context, effectiveRequest, describableTopicNames).thenApply { response =>
+    controller.createTopics(context, effectiveRequest, describableTopicNames, forwarded).thenApply { response =>
       duplicateTopicNames.forEach { name =>
         response.topics().add(new CreatableTopicResult().
           setName(name).
@@ -535,7 +536,7 @@ class ControllerApis(
         iterator.remove()
       }
     }
-    controller.legacyAlterConfigs(context, configChanges, alterConfigsRequest.data.validateOnly)
+    controller.legacyAlterConfigs(context, configChanges, alterConfigsRequest.data.validateOnly, request.isForwarded)
       .handle[Unit] { (controllerResults, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)
@@ -774,7 +775,7 @@ class ControllerApis(
         iterator.remove()
       }
     }
-    controller.incrementalAlterConfigs(context, configChanges, alterConfigsRequest.data.validateOnly)
+    controller.incrementalAlterConfigs(context, configChanges, alterConfigsRequest.data.validateOnly, request.isForwarded)
       .handle[Unit] { (controllerResults, exception) =>
         if (exception != null) {
           requestHelper.handleError(request, exception)

@@ -18,4 +18,4 @@ if [ -z "$JAVA_HOME" ]; then
   $(/usr/lib/ad-runtime-utils/bin/ad-runtime-utils -runtime java -config /etc/ad-runtime-utils/ads.yaml -service KAFKA)
 fi
 
-exec $(dirname $0)/kafka-run-class.sh kafka.tools.DumpLogSegments "$@"
+exec $(dirname $0)/kafka-run-class.sh org.apache.kafka.tools.DumpLogSegments "$@"

@@ -173,6 +173,8 @@ import org.apache.kafka.common.quota.ClientQuotaAlteration;
 import org.apache.kafka.common.quota.ClientQuotaEntity;
 import org.apache.kafka.common.quota.ClientQuotaFilter;
 import org.apache.kafka.common.quota.ClientQuotaFilterComponent;
+import org.apache.kafka.common.requests.AbstractRequest;
+import org.apache.kafka.common.requests.AbstractResponse;
 import org.apache.kafka.common.requests.AddRaftVoterRequest;
 import org.apache.kafka.common.requests.AddRaftVoterResponse;
 import org.apache.kafka.common.requests.AlterClientQuotasResponse;
@@ -297,8 +299,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -767,9 +771,9 @@ public class KafkaAdminClientTest {
 
     private static FeatureMetadata defaultFeatureMetadata() {
         return new FeatureMetadata(
-            Utils.mkMap(Utils.mkEntry("test_feature_1", new FinalizedVersionRange((short) 2, (short) 2))),
+            Map.of("test_feature_1", new FinalizedVersionRange((short) 2, (short) 2)),
             Optional.of(1L),
-            Utils.mkMap(Utils.mkEntry("test_feature_1", new SupportedVersionRange((short) 1, (short) 5))));
+            Map.of("test_feature_1", new SupportedVersionRange((short) 1, (short) 5)));
     }
 
     private static Features<org.apache.kafka.common.feature.SupportedVersionRange> convertSupportedFeaturesMap(Map<String, SupportedVersionRange> features) {
@@ -2252,7 +2256,12 @@ public class KafkaAdminClientTest {
 
     private static DescribeLogDirsResponse prepareDescribeLogDirsResponse(Errors error, String logDir, TopicPartition tp, long partitionSize, long offsetLag, long totalBytes, long usableBytes) {
         return prepareDescribeLogDirsResponse(error, logDir,
-                prepareDescribeLogDirsTopics(partitionSize, offsetLag, tp.topic(), tp.partition(), false), totalBytes, usableBytes);
+                prepareDescribeLogDirsTopics(partitionSize, offsetLag, tp.topic(), tp.partition(), false), totalBytes, usableBytes, false);
+    }
+
+    private static DescribeLogDirsResponse prepareDescribeLogDirsResponse(Errors error, String logDir, TopicPartition tp, long partitionSize, long offsetLag, long totalBytes, long usableBytes, boolean isCordoned) {
+        return prepareDescribeLogDirsResponse(error, logDir,
+                prepareDescribeLogDirsTopics(partitionSize, offsetLag, tp.topic(), tp.partition(), false), totalBytes, usableBytes, isCordoned);
     }
 
     private static List<DescribeLogDirsTopic> prepareDescribeLogDirsTopics(
@@ -2278,7 +2287,8 @@ public class KafkaAdminClientTest {
 
     private static DescribeLogDirsResponse prepareDescribeLogDirsResponse(Errors error, String logDir,
                                                                           List<DescribeLogDirsTopic> topics,
-                                                                          long totalBytes, long usableBytes) {
+                                                                          long totalBytes, long usableBytes,
+                                                                          boolean isCordoned) {
         return new DescribeLogDirsResponse(
                 new DescribeLogDirsResponseData().setResults(singletonList(new DescribeLogDirsResponseData.DescribeLogDirsResult()
                         .setErrorCode(error.code())
@@ -2286,6 +2296,7 @@ public class KafkaAdminClientTest {
                         .setTopics(topics)
                         .setTotalBytes(totalBytes)
                         .setUsableBytes(usableBytes)
+                        .setIsCordoned(isCordoned)
                 )));
     }
 
@@ -2355,6 +2366,7 @@ public class KafkaAdminClientTest {
         assertFalse(descriptionsReplicaInfos.get(tp).isFuture());
         assertEquals(totalBytes, descriptionsMap.get(logDir).totalBytes());
         assertEquals(usableBytes, descriptionsMap.get(logDir).usableBytes());
+        assertFalse(descriptionsMap.get(logDir).isCordoned());
     }
 
     @Test
@@ -2431,6 +2443,38 @@ public class KafkaAdminClientTest {
             assertEquals(singleton(logDir), allMap.keySet());
             assertEquals(error.exception().getClass(), allMap.get(logDir).error().getClass());
             assertEquals(emptySet(), allMap.get(logDir).replicaInfos().keySet());
+        }
+    }
+
+    @Test
+    public void testDescribeLogDirsWithCordonedDir() throws ExecutionException, InterruptedException {
+        Set<Integer> brokers = singleton(0);
+        String logDir = "/var/data/kafka";
+        TopicPartition tp = new TopicPartition("topic", 12);
+
+        try (AdminClientUnitTestEnv env = mockClientEnv()) {
+            env.kafkaClient().setNodeApiVersions(NodeApiVersions.create());
+            env.kafkaClient().prepareResponseFrom(
+                    prepareDescribeLogDirsResponse(Errors.NONE, logDir, tp, 123, -1, -1, -1, true),
+                    env.cluster().nodeById(0));
+
+            DescribeLogDirsResult result = env.adminClient().describeLogDirs(brokers);
+
+            Map<Integer, KafkaFuture<Map<String, LogDirDescription>>> descriptions = result.descriptions();
+            assertEquals(brokers, descriptions.keySet());
+            assertNotNull(descriptions.get(0));
+            Map<String, LogDirDescription> descriptionsMap = descriptions.get(0).get();
+            assertEquals(singleton(logDir), descriptionsMap.keySet());
+            assertTrue(descriptionsMap.get(logDir).isCordoned());
+            assertEquals(Set.of(tp), descriptionsMap.get(logDir).replicaInfos().keySet());
+
+            Map<Integer, Map<String, LogDirDescription>> allDescriptions = result.allDescriptions().get();
+            assertEquals(brokers, allDescriptions.keySet());
+            Map<String, LogDirDescription> allMap = allDescriptions.get(0);
+            assertNotNull(allMap);
+            assertEquals(singleton(logDir), allMap.keySet());
+            assertTrue(allMap.get(logDir).isCordoned());
+            assertEquals(Set.of(tp), allMap.get(logDir).replicaInfos().keySet());
         }
     }
 
@@ -5219,7 +5263,7 @@ public class KafkaAdminClientTest {
 
         ListConsumerGroupOffsetsSpec groupASpec = new ListConsumerGroupOffsetsSpec().topicPartitions(groupAPartitions);
         ListConsumerGroupOffsetsSpec groupBSpec = new ListConsumerGroupOffsetsSpec().topicPartitions(groupBPartitions);
-        return Utils.mkMap(Utils.mkEntry("groupA", groupASpec), Utils.mkEntry("groupB", groupBSpec));
+        return Map.of("groupA", groupASpec, "groupB", groupBSpec);
     }
 
     private Map<String, ListStreamsGroupOffsetsSpec> batchedListStreamsGroupOffsetsSpec() {
@@ -5228,7 +5272,7 @@ public class KafkaAdminClientTest {
 
         ListStreamsGroupOffsetsSpec groupASpec = new ListStreamsGroupOffsetsSpec().topicPartitions(groupAPartitions);
         ListStreamsGroupOffsetsSpec groupBSpec = new ListStreamsGroupOffsetsSpec().topicPartitions(groupBPartitions);
-        return Utils.mkMap(Utils.mkEntry("groupA", groupASpec), Utils.mkEntry("groupB", groupBSpec));
+        return Map.of("groupA", groupASpec, "groupB", groupBSpec);
     }
 
     private void waitForRequest(MockClient mockClient, ApiKeys apiKeys) throws Exception {
@@ -8325,6 +8369,113 @@ public class KafkaAdminClientTest {
         }
     }
 
+    /**
+     * Reproduces the scenario where the partition leader cache holds an entry pointing at a broker
+     * that has since left the cluster (for example after a broker is recycled with a new id). The
+     * cached leader sends the request straight to the fulfillment stage, but the admin client can
+     * never route it because the broker is no longer in the metadata. Without re-running the lookup,
+     * the call would sit unassigned until the request deadline expires and fail with
+     * "Timed out waiting for a node assignment". The admin client should instead re-resolve the
+     * leader and complete the request.
+     */
+    @Test
+    public void testListOffsetsRetriesLookupWhenCachedLeaderLeavesCluster() throws Exception {
+        Node node0 = new Node(0, "localhost", 8120);
+        Node node1 = new Node(1, "localhost", 8121);
+        final TopicPartition tp0 = new TopicPartition("foo", 0);
+
+        // Initially foo-0 is led by node1.
+        final Cluster initialCluster = new Cluster("mockClusterId", asList(node0, node1),
+            singletonList(new PartitionInfo("foo", 0, node1, new Node[]{node0, node1}, new Node[]{node0, node1})),
+            emptySet(), emptySet(), node0);
+        // After node1 leaves the cluster, foo-0 is led by node0.
+        final Cluster shrunkCluster = new Cluster("mockClusterId", singletonList(node0),
+            singletonList(new PartitionInfo("foo", 0, node0, new Node[]{node0}, new Node[]{node0})),
+            emptySet(), emptySet(), node0);
+
+        MockTime time = new MockTime();
+        try (AdminClientUnitTestEnv env = new AdminClientUnitTestEnv(time, initialCluster,
+                newStrMap(AdminClientConfig.DEFAULT_API_TIMEOUT_MS_CONFIG, "5000",
+                          AdminClientConfig.METADATA_MAX_AGE_CONFIG, "50"))) {
+            MockClient mockClient = env.kafkaClient();
+            mockClient.setNodeApiVersions(NodeApiVersions.create());
+
+            // First call: the lookup resolves foo-0 to node1 and caches it, then the offsets fetch
+            // succeeds on node1.
+            mockClient.prepareResponse(body -> body instanceof MetadataRequest,
+                prepareMetadataResponse(initialCluster, Errors.NONE));
+            mockClient.prepareResponseFrom(listOffsetsResponse(tp0, 100L), node1);
+            assertEquals(100L, env.adminClient().listOffsets(singletonMap(tp0, OffsetSpec.latest()))
+                .all().get().get(tp0).offset());
+
+            // Drop node1 from the admin client's metadata via the periodic broker-info refresh.
+            // Waiting for a second refresh guarantees the first one has been fully processed.
+            AtomicInteger refreshes = new AtomicInteger();
+            TestUtils.waitForCondition(() -> {
+                time.sleep(20);
+                if (respondToBrokerInfoRefresh(mockClient, shrunkCluster))
+                    refreshes.incrementAndGet();
+                return refreshes.get() >= 2;
+            }, "Timed out waiting for the broker-info metadata refresh to drop node1");
+
+            // Second call: the cache still points foo-0 at node1, which is gone. The admin client
+            // must re-resolve the leader (now node0) rather than getting stuck until the deadline.
+            ListOffsetsResult result = env.adminClient().listOffsets(singletonMap(tp0, OffsetSpec.latest()));
+            TestUtils.waitForCondition(() -> {
+                time.sleep(20);
+                // Keep node1 out of the metadata, re-resolve foo-0 to node0, and satisfy the fetch.
+                respondToBrokerInfoRefresh(mockClient, shrunkCluster);
+                respondToTopicMetadata(mockClient, "foo", shrunkCluster);
+                respondToListOffsets(mockClient, tp0, 200L, node0);
+                return result.all().isDone();
+            }, "Timed out waiting for listOffsets to recover after the cached leader left the cluster");
+
+            assertEquals(200L, result.all().get().get(tp0).offset());
+        }
+    }
+
+    private static ListOffsetsResponse listOffsetsResponse(TopicPartition tp, long offset) {
+        return new ListOffsetsResponse(new ListOffsetsResponseData().setTopics(singletonList(
+            ListOffsetsResponse.singletonListOffsetsTopicResponse(tp, Errors.NONE, -1L, offset, 5))));
+    }
+
+    /**
+     * Respond out of order to the first in-flight request matching {@code matcher} with
+     * {@code response}. Returns true if a matching request was found and answered.
+     */
+    private static boolean respondToInFlightRequest(MockClient mockClient,
+                                                    Predicate<ClientRequest> matcher,
+                                                    AbstractResponse response) {
+        for (ClientRequest request : mockClient.requests()) {
+            if (matcher.test(request)) {
+                mockClient.respondToRequest(request, response);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean respondToBrokerInfoRefresh(MockClient mockClient, Cluster cluster) {
+        return respondToInFlightRequest(mockClient, request -> {
+            AbstractRequest body = request.requestBuilder().build();
+            return body instanceof MetadataRequest && ((MetadataRequest) body).topics().isEmpty();
+        }, prepareMetadataResponse(cluster, Errors.NONE));
+    }
+
+    private static boolean respondToTopicMetadata(MockClient mockClient, String topic, Cluster cluster) {
+        return respondToInFlightRequest(mockClient, request -> {
+            AbstractRequest body = request.requestBuilder().build();
+            return body instanceof MetadataRequest && ((MetadataRequest) body).topics().contains(topic);
+        }, prepareMetadataResponse(cluster, Errors.NONE));
+    }
+
+    private static boolean respondToListOffsets(MockClient mockClient, TopicPartition tp, long offset, Node node) {
+        return respondToInFlightRequest(mockClient,
+            request -> request.requestBuilder().build() instanceof ListOffsetsRequest
+                && request.destination().equals(node.idString()),
+            listOffsetsResponse(tp, offset));
+    }
+
     @Test
     public void testListOffsetsRetriableErrors() throws Exception {
 
@@ -8761,9 +8912,9 @@ public class KafkaAdminClientTest {
     }
 
     private Map<String, FeatureUpdate> makeTestFeatureUpdates() {
-        return Utils.mkMap(
-            Utils.mkEntry("test_feature_1", new FeatureUpdate((short) 2,  FeatureUpdate.UpgradeType.UPGRADE)),
-            Utils.mkEntry("test_feature_2", new FeatureUpdate((short) 3,  FeatureUpdate.UpgradeType.SAFE_DOWNGRADE)));
+        return Map.of(
+            "test_feature_1", new FeatureUpdate((short) 2,  FeatureUpdate.UpgradeType.UPGRADE),
+            "test_feature_2", new FeatureUpdate((short) 3,  FeatureUpdate.UpgradeType.SAFE_DOWNGRADE));
     }
 
     private void testUpdateFeatures(Map<String, FeatureUpdate> featureUpdates,
@@ -8831,9 +8982,9 @@ public class KafkaAdminClientTest {
                     0),
                 env.cluster().nodeById(controllerId));
             final KafkaFuture<Void> future = env.adminClient().updateFeatures(
-                Utils.mkMap(
-                    Utils.mkEntry("test_feature_1", new FeatureUpdate((short) 2,  FeatureUpdate.UpgradeType.UPGRADE)),
-                    Utils.mkEntry("test_feature_2", new FeatureUpdate((short) 3,  FeatureUpdate.UpgradeType.SAFE_DOWNGRADE))),
+                Map.of(
+                    "test_feature_1", new FeatureUpdate((short) 2,  FeatureUpdate.UpgradeType.UPGRADE),
+                    "test_feature_2", new FeatureUpdate((short) 3,  FeatureUpdate.UpgradeType.SAFE_DOWNGRADE)),
                 new UpdateFeaturesOptions().timeoutMs(10000)
             ).all();
             future.get();
@@ -8845,8 +8996,7 @@ public class KafkaAdminClientTest {
         try (final AdminClientUnitTestEnv env = mockClientEnv()) {
             assertThrows(
                 IllegalArgumentException.class,
-                () -> env.adminClient().updateFeatures(
-                    new HashMap<>(), new UpdateFeaturesOptions()));
+                () -> env.adminClient().updateFeatures(new HashMap<>()));
         }
     }
 
@@ -8856,9 +9006,8 @@ public class KafkaAdminClientTest {
             assertThrows(
                 IllegalArgumentException.class,
                 () -> env.adminClient().updateFeatures(
-                    Utils.mkMap(Utils.mkEntry("feature", new FeatureUpdate((short) 2,  FeatureUpdate.UpgradeType.UPGRADE)),
-                                Utils.mkEntry("", new FeatureUpdate((short) 2,  FeatureUpdate.UpgradeType.UPGRADE))),
-                    new UpdateFeaturesOptions()));
+                    Map.of("feature", new FeatureUpdate((short) 2,  FeatureUpdate.UpgradeType.UPGRADE),
+                        "", new FeatureUpdate((short) 2,  FeatureUpdate.UpgradeType.UPGRADE))));
         }
     }
 

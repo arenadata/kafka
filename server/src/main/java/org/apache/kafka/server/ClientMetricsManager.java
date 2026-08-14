@@ -38,7 +38,7 @@ import org.apache.kafka.common.metrics.stats.Meter;
 import org.apache.kafka.common.metrics.stats.SampledStat;
 import org.apache.kafka.common.metrics.stats.WindowedCount;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.CompressionType;
+import org.apache.kafka.common.record.internal.CompressionType;
 import org.apache.kafka.common.requests.GetTelemetrySubscriptionsRequest;
 import org.apache.kafka.common.requests.GetTelemetrySubscriptionsResponse;
 import org.apache.kafka.common.requests.PushTelemetryRequest;
@@ -214,7 +214,7 @@ public class ClientMetricsManager implements AutoCloseable {
         if (metrics != null && metrics.limit() > 0) {
             try {
                 long exportTimeStartMs = time.hiResClockMs();
-                clientTelemetryExporterPlugin.exportMetrics(requestContext, request, clientInstance.pushIntervalMs());
+                clientTelemetryExporterPlugin.exportMetrics(requestContext, request, clientInstance.pushIntervalMs(), clientTelemetryMaxBytes);
                 clientMetricsStats.recordPluginExport(clientInstanceId, time.hiResClockMs() - exportTimeStartMs);
             } catch (Throwable exception) {
                 clientMetricsStats.recordPluginErrorCount(clientInstanceId);

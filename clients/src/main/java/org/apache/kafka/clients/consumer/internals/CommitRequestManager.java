@@ -39,7 +39,7 @@ import org.apache.kafka.common.message.OffsetFetchRequestData;
 import org.apache.kafka.common.message.OffsetFetchResponseData;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.record.internal.RecordBatch;
 import org.apache.kafka.common.requests.AbstractRequest;
 import org.apache.kafka.common.requests.OffsetCommitRequest;
 import org.apache.kafka.common.requests.OffsetCommitResponse;
@@ -1365,10 +1365,11 @@ public class CommitRequestManager implements RequestManager, MemberStateListener
 
     /**
      * <p>This is used to stage the unsent {@link OffsetCommitRequestState} and {@link OffsetFetchRequestState}.
-     * <li>unsentOffsetCommits holds the offset commit requests that have not been sent out</>
-     * <li>unsentOffsetFetches holds the offset fetch requests that have not been sent out</li>
-     * <li>inflightOffsetFetches holds the offset fetch requests that have been sent out but not completed</>.
-     * <p>
+     * <ul>
+     *   <li>unsentOffsetCommits holds the offset commit requests that have not been sent out</li>
+     *   <li>unsentOffsetFetches holds the offset fetch requests that have not been sent out</li>
+     *   <li>inflightOffsetFetches holds the offset fetch requests that have been sent out but not completed</li>
+     * </ul>
      * {@code addOffsetFetchRequest} dedupes the requests to avoid sending the same requests.
      */
 

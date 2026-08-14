@@ -223,6 +223,10 @@ public class ApplicationEventProcessor implements EventProcessor<ApplicationEven
                 process((StreamsOnAllTasksLostCallbackCompletedEvent) event);
                 return;
 
+            case APPLY_ASSIGNMENT:
+                process((ApplyAssignmentEvent) event);
+                return;
+
             default:
                 log.warn("Application event type {} was not expected", event.type());
         }
@@ -721,6 +725,33 @@ public class ApplicationEventProcessor implements EventProcessor<ApplicationEven
             return;
         }
         requestManagers.streamsMembershipManager.get().onAllTasksLostCallbackCompleted(event);
+    }
+
+    /**
+     * Update the subscription state with a new assignment that has been reconciled.
+     * This is triggered by the application thread during poll (to ensure that assignment changes
+     * happen only within a call to consumer.poll), and it's applied here on the background thread
+     * (to keep subscription state changes in the background)
+     */
+    private void process(final ApplyAssignmentEvent event) {
+        try {
+            if (requestManagers.consumerMembershipManager.isPresent()) {
+                requestManagers.consumerMembershipManager.get().applyAssignment(
+                    event.assignedPartitions(), event.addedPartitions());
+            } else if (requestManagers.streamsMembershipManager.isPresent()) {
+                requestManagers.streamsMembershipManager.get().applyAssignment(
+                    event.assignedPartitions(), event.addedPartitions());
+            } else {
+                log.warn("Neither ConsumerMembershipManager nor StreamsMembershipManager present " +
+                    "when processing ApplyAssignmentEvent");
+                event.future().completeExceptionally(
+                    new IllegalStateException("No membership manager available when processing ApplyAssignmentEvent"));
+                return;
+            }
+            event.future().complete(null);
+        } catch (Exception e) {
+            event.future().completeExceptionally(e);
+        }
     }
 
     private void process(final AsyncPollEvent event) {

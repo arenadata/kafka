@@ -33,7 +33,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -53,7 +52,7 @@ class OpenMetadataClientTest {
 
     @Test
     void lookupReturnsParsedEntityOnOk() throws Exception {
-        server.on("GET", "/api/v1/table/name/", 200,
+        server.on("GET", "/api/v1/tables/name/", 200,
                 "{\"id\":\"abc-123\",\"fullyQualifiedName\":\"db.schema.tbl\"}");
 
         OpenMetadataClient client = clientWithToken("secret");
@@ -66,13 +65,12 @@ class OpenMetadataClientTest {
     }
 
     @Test
-    void lookupReturnsNullOn404() throws Exception {
+    void lookupThrowsEntityNotAvailableOn404() {
         server.setDefault(404, "");
 
         OpenMetadataClient client = clientWithToken("secret");
-        EntityRef ref = client.lookupByFqn("table", "missing.fqn");
-
-        assertNull(ref);
+        assertThrows(EntityNotAvailableException.class,
+                () -> client.lookupByFqn("table", "missing.fqn"));
     }
 
     @Test
@@ -88,7 +86,7 @@ class OpenMetadataClientTest {
 
     @Test
     void lookupSendsAuthHeaderWhenTokenSet() throws Exception {
-        server.setDefault(404, "");
+        server.setDefault(200, "{\"id\":\"topic-id\"}");
 
         OpenMetadataClient client = clientWithToken("my-jwt");
         client.lookupByFqn("topic", "some.topic");
@@ -99,7 +97,7 @@ class OpenMetadataClientTest {
 
     @Test
     void lookupOmitsAuthHeaderWhenTokenNull() throws Exception {
-        server.setDefault(404, "");
+        server.setDefault(200, "{\"id\":\"topic-id\"}");
 
         OpenMetadataClient client = clientWithoutToken();
         client.lookupByFqn("topic", "some.topic");
@@ -111,13 +109,13 @@ class OpenMetadataClientTest {
 
     @Test
     void lookupUrlEncodesFqn() throws Exception {
-        server.setDefault(404, "");
+        server.setDefault(200, "{\"id\":\"table-id\"}");
 
         OpenMetadataClient client = clientWithToken("t");
         client.lookupByFqn("table", "weird name/with chars");
 
         StubOpenMetadataServer.RecordedRequest req = server.requests().get(0);
-        assertTrue(req.path.startsWith("/api/v1/table/name/"), "path: " + req.path);
+        assertTrue(req.path.startsWith("/api/v1/tables/name/"), "path: " + req.path);
         assertFalse(req.path.contains(" "), "spaces must be percent-encoded: " + req.path);
         assertFalse(req.path.contains("/with"), "embedded slashes must be percent-encoded: " + req.path);
     }
@@ -136,7 +134,7 @@ class OpenMetadataClientTest {
         StubOpenMetadataServer.RecordedRequest req = server.requests().get(0);
         assertEquals("PUT", req.method);
         assertEquals("/api/v1/tables", req.path);
-         assertEquals("application/json", req.headers.get("Content-Type"));
+        assertEquals("application/json", req.headers.get("Content-Type"));
         assertTrue(req.body.contains("\"name\":\"events\""), "body: " + req.body);
         assertTrue(req.body.contains("\"databaseSchema\":\"main.public\""), "body: " + req.body);
         assertTrue(req.body.contains("\"dataType\":\"BIGINT\""), "body: " + req.body);
@@ -191,7 +189,7 @@ class OpenMetadataClientTest {
 
     @Test
     void urlTrailingSlashIsStrippedBeforeAppendingApiV1() throws Exception {
-        server.setDefault(404, "");
+        server.setDefault(200, "{\"id\":\"topic-id\"}");
 
         Map<String, Object> props = baseProps();
         props.put(OpenMetadataReporterConfig.URL_CONFIG, server.url() + "/");

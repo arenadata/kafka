@@ -29,6 +29,7 @@ import org.apache.kafka.connect.openmetadata.model.ColumnPayload;
 import org.apache.kafka.connect.openmetadata.model.EntityRef;
 import org.apache.kafka.connect.openmetadata.model.LineageEdgePayload;
 import org.apache.kafka.connect.openmetadata.model.TablePayload;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -113,14 +114,15 @@ public class OpenMetadataReporter implements MetadataReporter {
     }
 
     @Override
-    public void close() throws IOException {
-        State s = state.getAndSet(null);
+    public synchronized void close() {
+        State s = state.get();
         if (s == null) {
             return;
         }
         try {
             s.sender.stop();
         } finally {
+            state.compareAndSet(s, null);
             s.executor.shutdown();
             try {
                 if (!s.executor.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -148,6 +150,8 @@ public class OpenMetadataReporter implements MetadataReporter {
             } else {
                 log.debug("Ignoring unknown metadata event type: {}", event.getClass().getName());
             }
+        } catch (EntityNotAvailableException e) {
+            throw new DeferredSendException(e.getMessage(), e);
         } catch (IOException e) {
             throw BatchSender.wrap(e);
         } catch (InterruptedException ie) {
@@ -160,14 +164,18 @@ public class OpenMetadataReporter implements MetadataReporter {
         EntityRef from = resolve(s, edge.source());
         EntityRef to = resolve(s, edge.target());
         if (from == null || to == null) {
-            log.debug("Lineage edge skipped, endpoint missing in OpenMetadata: {} -> {}", edge.source(), edge.target());
-            return;
+            throw new DeferredSendException(
+                    "Lineage endpoint missing in OpenMetadata: " + edge.source() + " -> " + edge.target());
         }
-        EntityRef pipeline = null;
-        if (edge.pipelineName() != null) {
-            pipeline = s.client.lookupByFqn(OM_TYPE_PIPELINE, edge.pipelineName());
+        EntityRef pipeline = resolvePipeline(s, edge.pipelineName());
+        s.client.putLineage(new LineageEdgePayload(from, to, pipeline, edge.columnsLineage()));
+    }
+
+    private EntityRef resolvePipeline(State s, String pipelineName) throws IOException, InterruptedException {
+        if (pipelineName == null) {
+            return null;
         }
-        s.client.putLineage(new LineageEdgePayload(from, to, pipeline));
+        return s.client.lookupByFqn(OM_TYPE_PIPELINE, pipelineName);
     }
 
     private void handleTableCreated(State s, TableCreated event) throws IOException, InterruptedException {
@@ -193,17 +201,17 @@ public class OpenMetadataReporter implements MetadataReporter {
     }
 
     private EntityRef resolve(State s, EntityReference ref) throws IOException, InterruptedException {
-        switch (ref.type()) {
-            case EntityReference.TYPE_KAFKA_TOPIC:
-                return s.client.lookupByFqn(OM_TYPE_TOPIC, ref.name());
-            case EntityReference.TYPE_ICEBERG_TABLE:
-            case EntityReference.TYPE_JDBC_TABLE:
-                return s.client.lookupByFqn(OM_TYPE_TABLE, ref.name());
-            default:
+        return switch (ref.type()) {
+            case EntityReference.TYPE_KAFKA_TOPIC -> s.client.lookupByFqn(OM_TYPE_TOPIC, ref.name());
+            case EntityReference.TYPE_ICEBERG_TABLE, EntityReference.TYPE_JDBC_TABLE ->
+                s.client.lookupByFqn(OM_TYPE_TABLE, ref.name());
+            default -> {
                 log.debug("Unsupported entity type {}; skipping", ref.type());
-                return null;
-        }
+                yield null;
+            }
+        };
     }
+
     private static List<ColumnPayload> toColumns(Schema schema) {
         if (schema == null || schema.type() != Schema.Type.STRUCT) {
             return new ArrayList<>();
@@ -216,22 +224,22 @@ public class OpenMetadataReporter implements MetadataReporter {
     }
 
     private static String toOmType(Schema schema) {
-        if (schema == null) return "UNKNOWN";
-        switch (schema.type()) {
-            case INT8: return "TINYINT";
-            case INT16: return "SMALLINT";
-            case INT32: return "INT";
-            case INT64: return "BIGINT";
-            case FLOAT32: return "FLOAT";
-            case FLOAT64: return "DOUBLE";
-            case BOOLEAN: return "BOOLEAN";
-            case STRING: return "STRING";
-            case BYTES: return "VARBINARY";
-            case ARRAY: return "ARRAY";
-            case MAP: return "MAP";
-            case STRUCT: return "STRUCT";
-            default: return "UNKNOWN";
-        }
+        return schema == null
+                ? "UNKNOWN"
+                : switch (schema.type()) {
+            case INT8 -> "TINYINT";
+            case INT16 -> "SMALLINT";
+            case INT32 -> "INT";
+            case INT64 -> "BIGINT";
+            case FLOAT32 -> "FLOAT";
+            case FLOAT64 -> "DOUBLE";
+            case BOOLEAN -> "BOOLEAN";
+            case STRING -> "STRING";
+            case BYTES -> "VARBINARY";
+            case ARRAY -> "ARRAY";
+            case MAP -> "MAP";
+            case STRUCT -> "STRUCT";
+        };
     }
 
     private static String joinNonNull(String a, String b) {

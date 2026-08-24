@@ -20,6 +20,7 @@ import org.apache.kafka.connect.metadata.MetadataEvent;
 import org.apache.kafka.connect.metadata.MetadataReporter;
 import org.apache.kafka.connect.runtime.isolation.LoaderSwap;
 import org.apache.kafka.connect.util.ConnectorTaskId;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

@@ -16,17 +16,13 @@
  */
 package org.apache.kafka.connect.openmetadata;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.connect.openmetadata.model.EntityRef;
 import org.apache.kafka.connect.openmetadata.model.LineageEdgePayload;
 import org.apache.kafka.connect.openmetadata.model.TablePayload;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -37,14 +33,16 @@ import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
 /**
  * Wrapper over {@link HttpClient} that knows how to talk to a few
  * OpenMetadata REST endpoints. All retry/backoff lives in {@link BatchSender};
  * this class does one HTTP call per method and rethrows.
  */
 public class OpenMetadataClient {
-
-    private static final Logger log = LoggerFactory.getLogger(OpenMetadataClient.class);
 
     private final HttpClient http;
     private final ObjectMapper mapper;
@@ -54,7 +52,7 @@ public class OpenMetadataClient {
 
     private static final String API_URI = "/api/v1";
 
-    OpenMetadataClient(OpenMetadataReporterConfig config) {
+    public OpenMetadataClient(OpenMetadataReporterConfig config) {
         this.baseUrl = config.url() + API_URI;
         this.authHeader = config.token() == null ? null : "Bearer " + config.token().value();
         this.requestTimeout = config.requestTimeout();
@@ -67,11 +65,12 @@ public class OpenMetadataClient {
         this.http = builder.build();
     }
 
-    EntityRef lookupByFqn(String entityType, String fqn) throws IOException, InterruptedException {
-        URI uri = URI.create(baseUrl + "/" + entityType + "/name/" + encode(fqn));
+    public EntityRef lookupByFqn(String entityType, String fqn) throws IOException, InterruptedException {
+        URI uri = URI.create(baseUrl + "/" + entityType + "s/name/" + encode(fqn));
         HttpResponse<String> response = send(HttpRequest.newBuilder(uri).GET());
         if (response.statusCode() == 404) {
-            return null;
+            throw new EntityNotAvailableException(
+                    "Lookup of " + entityType + " " + fqn + " returned 404: " + response.body());
         }
         if (response.statusCode() / 100 != 2) {
             throw new IOException("Lookup of " + entityType + " " + fqn + " returned " + response.statusCode() + ": " + response.body());
@@ -81,7 +80,7 @@ public class OpenMetadataClient {
         return ref;
     }
 
-    void putTable(TablePayload payload) throws IOException, InterruptedException {
+    public void putTable(TablePayload payload) throws IOException, InterruptedException {
         URI uri = URI.create(baseUrl + "/tables");
         String body = mapper.writeValueAsString(payload);
         HttpResponse<String> response = send(HttpRequest.newBuilder(uri)
@@ -92,12 +91,15 @@ public class OpenMetadataClient {
         }
     }
 
-    void putLineage(LineageEdgePayload payload) throws IOException, InterruptedException {
+    public void putLineage(LineageEdgePayload payload) throws IOException, InterruptedException {
         URI uri = URI.create(baseUrl + "/lineage");
         String body = mapper.writeValueAsString(payload);
         HttpResponse<String> response = send(HttpRequest.newBuilder(uri)
                 .header("Content-Type", "application/json")
                 .PUT(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8)));
+        if (response.statusCode() == 404) {
+            throw new EntityNotAvailableException("PUT /lineage returned 404: " + response.body());
+        }
         if (response.statusCode() / 100 != 2) {
             throw new IOException("PUT /lineage returned " + response.statusCode() + ": " + response.body());
         }
@@ -138,13 +140,5 @@ public class OpenMetadataClient {
         } catch (Exception e) {
             throw new IllegalStateException("Cannot create insecure SSL context", e);
         }
-    }
-
-    String baseUrl() {
-        return baseUrl;
-    }
-
-    Duration requestTimeout() {
-        return requestTimeout;
     }
 }

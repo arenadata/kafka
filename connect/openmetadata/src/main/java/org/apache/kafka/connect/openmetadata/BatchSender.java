@@ -17,6 +17,7 @@
 package org.apache.kafka.connect.openmetadata;
 
 import org.apache.kafka.connect.metadata.MetadataEvent;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,19 +49,19 @@ public class BatchSender {
 
     private ScheduledFuture<?> task;
 
-    BatchSender(OpenMetadataReporterConfig config, ScheduledExecutorService executor, Consumer<MetadataEvent> sink) {
+    public BatchSender(OpenMetadataReporterConfig config, ScheduledExecutorService executor, Consumer<MetadataEvent> sink) {
         this.config = config;
         this.executor = executor;
         this.sink = sink;
         this.buffer = new LinkedBlockingQueue<>(config.bufferSize());
     }
 
-    void start() {
+    public void start() {
         long intervalMs = config.flushInterval().toMillis();
         task = executor.scheduleWithFixedDelay(this::drainSafely, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
     }
 
-    void offer(MetadataEvent event) {
+    public void offer(MetadataEvent event) {
         if (!buffer.offer(event)) {
             long dropped = droppedEvents.incrementAndGet();
             if (Long.bitCount(dropped) == 1) {
@@ -70,22 +71,22 @@ public class BatchSender {
         }
     }
 
-    void drainNow() {
-        drainSafely();
+    public void drainNow() {
+        drainAllSafely();
     }
 
-    void stop() {
+    public void stop() {
         if (task != null) {
             task.cancel(false);
         }
-        drainSafely();
+        drainAllSafely();
     }
 
-    long droppedEventsCount() {
+    public long droppedEventsCount() {
         return droppedEvents.get();
     }
 
-    int bufferDepth() {
+    public int bufferDepth() {
         return buffer.size();
     }
 
@@ -97,12 +98,36 @@ public class BatchSender {
         }
     }
 
-    private void drainOnce() {
-        List<MetadataEvent> batch = new ArrayList<>(config.batchSize());
-        buffer.drainTo(batch, config.batchSize());
+    private void drainAllSafely() {
+        try {
+            drainAvailable();
+        } catch (Throwable t) {
+            log.warn("Metadata buffer drain failed", t);
+        }
+    }
+
+    private synchronized void drainAvailable() {
+        int remaining = buffer.size();
+        while (remaining > 0) {
+            int drained = drainOnce(Math.min(config.batchSize(), remaining));
+            if (drained == 0) {
+                return;
+            }
+            remaining -= drained;
+        }
+    }
+
+    private synchronized void drainOnce() {
+        drainOnce(config.batchSize());
+    }
+
+    private int drainOnce(int maxEvents) {
+        List<MetadataEvent> batch = new ArrayList<>(maxEvents);
+        buffer.drainTo(batch, maxEvents);
         for (MetadataEvent event : batch) {
             sendWithRetry(event);
         }
+        return batch.size();
     }
 
     private void sendWithRetry(MetadataEvent event) {
@@ -112,6 +137,16 @@ public class BatchSender {
         while (true) {
             try {
                 sink.accept(event);
+                return;
+            } catch (DeferredSendException e) {
+                long timeoutMs = config.entityNotAvailableRetryTimeout().toMillis();
+                if (timeoutMs > 0 && event.timestamp() + timeoutMs < System.currentTimeMillis()) {
+                    log.warn("Dropping metadata event {} because referenced entities were not available "
+                            + "within {} ms", event, timeoutMs);
+                    return;
+                }
+                log.debug("Deferring metadata event until a later flush: {}", event, e);
+                offer(event);
                 return;
             } catch (PermanentSendException e) {
                 log.warn("Dropping metadata event {}: {}", event, e.getMessage());

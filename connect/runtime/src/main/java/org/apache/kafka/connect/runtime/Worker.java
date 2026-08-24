@@ -1068,10 +1068,7 @@ public final class Worker {
         return null;
     }
 
-    private WorkerMetadataReporter createWorkerMetadataReporter(
-            ConnectorTaskId taskId,
-            ConnectorConfig connConfig,
-            ClassLoader connectorLoader) {
+    private WorkerMetadataReporter createWorkerMetadataReporter(ConnectorTaskId taskId, ConnectorConfig connConfig) {
         String reporterClass = connConfig.metadataReporterClass();
         if (reporterClass == null) {
             return null;
@@ -1083,12 +1080,11 @@ public final class Worker {
         } catch (Throwable t) {
             throw new ConnectException("Failed to load metadata reporter class '" + reporterClass + "' for " + taskId, t);
         }
-        if (!(raw instanceof MetadataReporter)) {
+        if (!(raw instanceof MetadataReporter reporter)) {
             Utils.closeQuietly((raw instanceof AutoCloseable) ? (AutoCloseable) raw : null, "metadata reporter");
             throw new ConnectException("Coonfigured metadata reporter class '" + reporterClass + "' is not an instance of "
             + MetadataReporter.class.getName() + " (got " + raw.getClass().getName() + ")");
         }
-        MetadataReporter reporter = (MetadataReporter) raw;
 
         try (LoaderSwap ignored = plugins.withClassLoader(reporter.getClass().getClassLoader())) {
             reporter.configure(connConfig.metadataReporterConfigs());
@@ -1949,7 +1945,7 @@ public final class Worker {
             WorkerErrantRecordReporter workerErrantRecordReporter = createWorkerErrantRecordReporter(sinkConfig, retryWithToleranceOperator,
                     keyConverterPlugin.get(), valueConverterPlugin.get(), headerConverterPlugin.get());
 
-            WorkerMetadataReporter workerMetadataReporter = createWorkerMetadataReporter(id, connectorConfig, classLoader);
+            WorkerMetadataReporter workerMetadataReporter = createWorkerMetadataReporter(id, connectorConfig);
 
             Map<String, Object> consumerProps = baseConsumerConfigs(
                     id.connector(),  "connector-consumer-" + id, config, connectorConfig, connectorClass,
@@ -1996,7 +1992,7 @@ public final class Worker {
                     connectorClientConfigOverridePolicy, kafkaClusterId);
             KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProps);
 
-            WorkerMetadataReporter workerMetadataReporter = createWorkerMetadataReporter(id, connectorConfig, classLoader);
+            WorkerMetadataReporter workerMetadataReporter = createWorkerMetadataReporter(id, connectorConfig);
 
             TopicAdmin topicAdmin = null;
             final boolean topicCreationEnabled = sourceConnectorTopicCreationEnabled(sourceConfig);
@@ -2066,7 +2062,7 @@ public final class Worker {
                     connectorClientConfigOverridePolicy, kafkaClusterId);
             KafkaProducer<byte[], byte[]> producer = new KafkaProducer<>(producerProps);
 
-            WorkerMetadataReporter workerMetadataReporter = createWorkerMetadataReporter(id, connectorConfig, classLoader);
+            WorkerMetadataReporter workerMetadataReporter = createWorkerMetadataReporter(id, connectorConfig);
 
             // Create a topic admin that the task will use for its offsets topic and, potentially, automatic topic creation
             Map<String, Object> adminOverrides = adminConfigs(id.connector(), "connector-adminclient-" + id, config,

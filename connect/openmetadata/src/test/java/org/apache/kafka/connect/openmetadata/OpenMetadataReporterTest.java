@@ -32,8 +32,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OpenMetadataReporterTest {
@@ -58,9 +58,9 @@ class OpenMetadataReporterTest {
 
     @Test
     void lineageEdgeLooksUpEndpointsAndPostsLineage() {
-        server.on("GET", "/api/v1/topic/name/", 200, "{\"id\":\"topic-id\"}");
-        server.on("GET", "/api/v1/table/name/", 200, "{\"id\":\"table-id\"}");
-        server.on("GET", "/api/v1/pipeline/name/", 200, "{\"id\":\"pipe-id\"}");
+        server.on("GET", "/api/v1/topics/name/", 200, "{\"id\":\"topic-id\"}");
+        server.on("GET", "/api/v1/tables/name/", 200, "{\"id\":\"table-id\"}");
+        server.on("GET", "/api/v1/pipelines/name/", 200, "{\"id\":\"pipe-id\"}");
         server.on("PUT", "/api/v1/lineage", 200, "{}");
 
         configure();
@@ -73,11 +73,11 @@ class OpenMetadataReporterTest {
         List<StubOpenMetadataServer.RecordedRequest> reqs = server.requests();
         assertEquals(4, reqs.size(), "expected source lookup, target lookup, pipeline lookup, PUT /lineage");
         assertEquals("GET", reqs.get(0).method);
-        assertTrue(reqs.get(0).path.startsWith("/api/v1/topic/name/"), reqs.get(0).path);
+        assertTrue(reqs.get(0).path.startsWith("/api/v1/topics/name/"), reqs.get(0).path);
         assertEquals("GET", reqs.get(1).method);
-        assertTrue(reqs.get(1).path.startsWith("/api/v1/table/name/"), reqs.get(1).path);
+        assertTrue(reqs.get(1).path.startsWith("/api/v1/tables/name/"), reqs.get(1).path);
         assertEquals("GET", reqs.get(2).method);
-        assertTrue(reqs.get(2).path.startsWith("/api/v1/pipeline/name/"), reqs.get(2).path);
+        assertTrue(reqs.get(2).path.startsWith("/api/v1/pipelines/name/"), reqs.get(2).path);
         assertEquals("PUT", reqs.get(3).method);
         assertEquals("/api/v1/lineage", reqs.get(3).path);
         assertTrue(reqs.get(3).body.contains("\"id\":\"topic-id\""), "from id missing: " + reqs.get(3).body);
@@ -87,8 +87,8 @@ class OpenMetadataReporterTest {
 
     @Test
     void lineageEdgeSkipsPutWhenSourceLookupReturns404() {
-        server.on("GET", "/api/v1/topic/name/", 404, "");
-        server.on("GET", "/api/v1/table/name/", 200, "{\"id\":\"table-id\"}");
+        server.on("GET", "/api/v1/topics/name/", 404, "");
+        server.on("GET", "/api/v1/tables/name/", 200, "{\"id\":\"table-id\"}");
 
         configure();
         reporter.report(new LineageEdge(
@@ -106,7 +106,7 @@ class OpenMetadataReporterTest {
 
     @Test
     void unsupportedEntityTypeSkipsLineageWithoutLookup() {
-        server.on("GET", "/api/v1/table/name/", 200, "{\"id\":\"table-id\"}");
+        server.on("GET", "/api/v1/tables/name/", 200, "{\"id\":\"table-id\"}");
 
         configure();
         reporter.report(new LineageEdge(
@@ -118,7 +118,7 @@ class OpenMetadataReporterTest {
         List<StubOpenMetadataServer.RecordedRequest> reqs = server.requests();
         for (StubOpenMetadataServer.RecordedRequest r : reqs) {
             assertEquals("GET", r.method, "no PUT /lineage when source type is unsupported");
-            assertTrue(r.path.startsWith("/api/v1/table/name/"),
+            assertTrue(r.path.startsWith("/api/v1/tables/name/"),
                     "no lookup should be issued for the unsupported source: " + r.path);
         }
     }

@@ -91,7 +91,7 @@ class BatchSenderTest {
     }
 
     @Test
-    void drainNowRespectsBatchSize() {
+    void drainNowFlushesAllBatches() {
         List<MetadataEvent> received = new ArrayList<>();
         BatchSender sender = new BatchSender(config(10, 3, 0), executor, received::add);
 
@@ -101,8 +101,8 @@ class BatchSenderTest {
 
         sender.drainNow();
 
-        assertEquals(3, received.size());
-        assertEquals(7, sender.bufferDepth());
+        assertEquals(10, received.size());
+        assertEquals(0, sender.bufferDepth());
     }
 
     @Test

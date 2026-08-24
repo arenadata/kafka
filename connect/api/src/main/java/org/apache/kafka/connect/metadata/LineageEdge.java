@@ -16,6 +16,8 @@
  */
 package org.apache.kafka.connect.metadata;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -32,19 +34,36 @@ public final class LineageEdge extends MetadataEvent {
     private final EntityReference source;
     private final EntityReference target;
     private final String pipelineName;
+    private final List<ColumnLineage> columnsLineage;
 
     public LineageEdge(EntityReference source, EntityReference target, String pipelineName) {
-        this(System.currentTimeMillis(), source, target, pipelineName);
+        this(source, target, pipelineName, Collections.emptyList());
+    }
+
+    public LineageEdge(EntityReference source,
+                       EntityReference target,
+                       String pipelineName,
+                       List<ColumnLineage> columnsLineage) {
+        this(System.currentTimeMillis(), source, target, pipelineName, columnsLineage);
     }
 
     public LineageEdge(long timestamp,
                        EntityReference source,
                        EntityReference target,
                        String pipelineName) {
+        this(timestamp, source, target, pipelineName, Collections.emptyList());
+    }
+
+    public LineageEdge(long timestamp,
+                       EntityReference source,
+                       EntityReference target,
+                       String pipelineName,
+                       List<ColumnLineage> columnsLineage) {
         super(timestamp);
         this.source = Objects.requireNonNull(source, "source");
         this.target = Objects.requireNonNull(target, "target");
         this.pipelineName = Objects.requireNonNull(pipelineName, "pipelineName");
+        this.columnsLineage = List.copyOf(Objects.requireNonNull(columnsLineage, "columnsLineage"));
     }
 
     public EntityReference source() {
@@ -57,5 +76,9 @@ public final class LineageEdge extends MetadataEvent {
 
     public String pipelineName() {
         return pipelineName;
+    }
+
+    public List<ColumnLineage> columnsLineage() {
+        return columnsLineage;
     }
 }

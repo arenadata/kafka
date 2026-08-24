@@ -31,13 +31,13 @@ public class OpenMetadataReporterConfig extends AbstractConfig {
     public static final String URL_CONFIG = "url";
     private static final String URL_DOC =
             "Base URL of the OpenMetadata server, e.g. https://openmetadata.example.com. "
-            + "The /api/v1 path suffix is appended automatically.";
+                    + "The /api/v1 path suffix is appended automatically.";
 
     public static final String TOKEN_CONFIG = "token";
     private static final String TOKEN_DOC =
             "Bearer token used for OpenMetadata API authentication. May be a JWT "
-            + "or any opaque string accepted by the sever. Read from a file with "
-            + "the standard Kafka Connect ${file: ...} indirection if desired.";
+                    + "or any opaque string accepted by the sever. Read from a file with "
+                    + "the standard Kafka Connect ${file: ...} indirection if desired.";
 
     public static final String BATCH_SIZE_CONFIG = "batch.size";
     public static final int BATCH_SIZE_DEFAULT = 50;
@@ -53,7 +53,7 @@ public class OpenMetadataReporterConfig extends AbstractConfig {
     public static final int BUFFER_SIZE_DEFAULT = 1_000;
     private static final String BUFFER_SIZE_DOC =
             "Maximum number of events to buffer in memory. New events are dropped "
-            + "(with a log warning) when the buffer is full.";
+                    + "(with a log warning) when the buffer is full.";
 
     public static final String REQUEST_TIMEOUT_MS_CONFIG = "request.timeout.ms";
     public static final long REQUEST_TIMEOUT_MS_DEFAULT = 30_000L;
@@ -64,7 +64,7 @@ public class OpenMetadataReporterConfig extends AbstractConfig {
     public static final int MAX_RETRIES_MS_DEFAULT = 3;
     private static final String MAX_RETRIES_DOC =
             "Maximum number of retry attempts for transient (5xx, network) failures. "
-            + "4xx responses are not retried.";
+                    + "4xx responses are not retried.";
 
     public static final String RETRY_BACKOFF_MS_CONFIG = "retry.backoff.ms";
     public static final long RETRY_BACKOFF_MS_DEFAULT = 500L;
@@ -75,6 +75,14 @@ public class OpenMetadataReporterConfig extends AbstractConfig {
     public static final boolean VERIFY_SSL_DEFAULT = true;
     private static final String VERIFY_SSL_DOC =
             "Whether to verify the OpenMEtadata server's TLS certificate.";
+
+    public static final String ENTITY_NOT_AVAILABLE_RETRY_TIMEOUT_MINUTES_CONFIG =
+            "entity.not.available.retry.timeout.minutes";
+    public static final long ENTITY_NOT_AVAILABLE_RETRY_TIMEOUT_MINUTES_DEFAULT = 1_440L;
+    private static final String ENTITY_NOT_AVAILABLE_RETRY_TIMEOUT_MINUTES_DOC =
+            "Maximum time, in minutes, to retry a metadata event when a referenced "
+                    + "entity is not yet available in OpenMetadata. The timeout is measured "
+                    + "from the event timestamp. Set to 0 to retry indefinitely.";
 
     private static final ConfigDef CONFIG_DEF = new ConfigDef()
             .define(URL_CONFIG, Type.STRING, ConfigDef.NO_DEFAULT_VALUE,
@@ -94,7 +102,11 @@ public class OpenMetadataReporterConfig extends AbstractConfig {
             .define(MAX_RETRIES_CONFIG, Type.INT, MAX_RETRIES_MS_DEFAULT,
                     Importance.LOW, MAX_RETRIES_DOC, "Retry", 1, Width.SHORT, "Max retries")
             .define(RETRY_BACKOFF_MS_CONFIG, Type.LONG, RETRY_BACKOFF_MS_DEFAULT,
-                    Importance.LOW, RETRY_BACKOFF_MS_DOC, "Retry", 2, Width.SHORT, "Retry backoff (ms)");
+                    Importance.LOW, RETRY_BACKOFF_MS_DOC, "Retry", 2, Width.SHORT, "Retry backoff (ms)")
+            .define(ENTITY_NOT_AVAILABLE_RETRY_TIMEOUT_MINUTES_CONFIG, Type.LONG,
+                    ENTITY_NOT_AVAILABLE_RETRY_TIMEOUT_MINUTES_DEFAULT, ConfigDef.Range.atLeast(0L),
+                    Importance.MEDIUM, ENTITY_NOT_AVAILABLE_RETRY_TIMEOUT_MINUTES_DOC,
+                    "Retry", 3, Width.SHORT, "Entity availability retry timeout (minutes)");
 
     public OpenMetadataReporterConfig(Map<String, ?> originals) {
         super(CONFIG_DEF, originals);
@@ -110,7 +122,7 @@ public class OpenMetadataReporterConfig extends AbstractConfig {
     }
 
     public boolean verifySsl() {
-        return  getBoolean(VERIFY_SSL_CONFIG);
+        return getBoolean(VERIFY_SSL_CONFIG);
     }
 
     public Duration requestTimeout() {
@@ -139,5 +151,9 @@ public class OpenMetadataReporterConfig extends AbstractConfig {
 
     public static ConfigDef configDef() {
         return CONFIG_DEF;
+    }
+
+    public Duration entityNotAvailableRetryTimeout() {
+        return Duration.ofMinutes(getLong(ENTITY_NOT_AVAILABLE_RETRY_TIMEOUT_MINUTES_CONFIG));
     }
 }

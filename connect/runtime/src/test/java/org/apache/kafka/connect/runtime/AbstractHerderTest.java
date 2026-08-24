@@ -485,13 +485,14 @@ public class AbstractHerderTest {
         assertEquals(connectorClass.getName(), result.name());
         assertEquals(List.of(ConnectorConfig.COMMON_GROUP, ConnectorConfig.TRANSFORMS_GROUP,
                 ConnectorConfig.PREDICATES_GROUP, ConnectorConfig.ERROR_GROUP,
+                ConnectorConfig.METADATA_REPORTER_GROUP,
                 SourceConnectorConfig.TOPIC_CREATION_GROUP, SourceConnectorConfig.EXACTLY_ONCE_SUPPORT_GROUP,
                 SourceConnectorConfig.OFFSETS_TOPIC_GROUP), result.groups());
         assertEquals(2, result.errorCount());
         Map<String, ConfigInfo> infos = result.configs().stream()
                 .collect(Collectors.toMap(info -> info.configKey().name(), Function.identity()));
-        // Base connector config has 15 fields, connector's configs add 7
-        assertEquals(26, infos.size());
+        // Base connector config has 16 fields, connector's configs add 7
+        assertEquals(27, infos.size());
         // Missing name should generate an error
         assertEquals(ConnectorConfig.NAME_CONFIG,
                 infos.get(ConnectorConfig.NAME_CONFIG).configValue().name());
@@ -596,6 +597,7 @@ public class AbstractHerderTest {
                 ConnectorConfig.TRANSFORMS_GROUP,
                 ConnectorConfig.PREDICATES_GROUP,
                 ConnectorConfig.ERROR_GROUP,
+                ConnectorConfig.METADATA_REPORTER_GROUP,
                 SourceConnectorConfig.TOPIC_CREATION_GROUP,
                 SourceConnectorConfig.EXACTLY_ONCE_SUPPORT_GROUP,
                 SourceConnectorConfig.OFFSETS_TOPIC_GROUP,
@@ -606,7 +608,7 @@ public class AbstractHerderTest {
         assertEquals(1, result.errorCount());
         Map<String, ConfigInfo> infos = result.configs().stream()
                 .collect(Collectors.toMap(info -> info.configKey().name(), Function.identity()));
-        assertEquals(33, infos.size());
+        assertEquals(34, infos.size());
         // Should get 2 type fields from the transforms, first adds its own config since it has a valid class
         assertEquals("transforms.xformA.type",
                 infos.get("transforms.xformA.type").configValue().name());
@@ -657,6 +659,7 @@ public class AbstractHerderTest {
                 ConnectorConfig.TRANSFORMS_GROUP,
                 ConnectorConfig.PREDICATES_GROUP,
                 ConnectorConfig.ERROR_GROUP,
+                ConnectorConfig.METADATA_REPORTER_GROUP,
                 SourceConnectorConfig.TOPIC_CREATION_GROUP,
                 SourceConnectorConfig.EXACTLY_ONCE_SUPPORT_GROUP,
                 SourceConnectorConfig.OFFSETS_TOPIC_GROUP,
@@ -668,7 +671,7 @@ public class AbstractHerderTest {
         assertEquals(1, result.errorCount());
         Map<String, ConfigInfo> infos = result.configs().stream()
                 .collect(Collectors.toMap(info -> info.configKey().name(), Function.identity()));
-        assertEquals(36, infos.size());
+        assertEquals(37, infos.size());
         // Should get 2 type fields from the transforms, first adds its own config since it has a valid class
         assertEquals("transforms.xformA.type", infos.get("transforms.xformA.type").configValue().name());
         assertTrue(infos.get("transforms.xformA.type").configValue().errors().isEmpty());
@@ -724,14 +727,15 @@ public class AbstractHerderTest {
             ConnectorConfig.TRANSFORMS_GROUP,
             ConnectorConfig.PREDICATES_GROUP,
             ConnectorConfig.ERROR_GROUP,
+            ConnectorConfig.METADATA_REPORTER_GROUP,
             SourceConnectorConfig.TOPIC_CREATION_GROUP,
             SourceConnectorConfig.EXACTLY_ONCE_SUPPORT_GROUP,
             SourceConnectorConfig.OFFSETS_TOPIC_GROUP
         );
         assertEquals(expectedGroups, result.groups());
         assertEquals(1, result.errorCount());
-        // Base connector config has 19 fields, connector's configs add 7, and 2 producer overrides
-        assertEquals(28, result.configs().size());
+        // Base connector config has 20 fields, connector's configs add 7, and 2 producer overrides
+        assertEquals(29, result.configs().size());
         assertTrue(result.configs().stream().anyMatch(
             configInfo -> ackConfigKey.equals(configInfo.configValue().name()) && !configInfo.configValue().errors().isEmpty()));
         assertTrue(result.configs().stream().anyMatch(
@@ -818,14 +822,15 @@ public class AbstractHerderTest {
                 ConnectorConfig.TRANSFORMS_GROUP,
                 ConnectorConfig.PREDICATES_GROUP,
                 ConnectorConfig.ERROR_GROUP,
+                ConnectorConfig.METADATA_REPORTER_GROUP,
                 SourceConnectorConfig.TOPIC_CREATION_GROUP,
                 SourceConnectorConfig.EXACTLY_ONCE_SUPPORT_GROUP,
                 SourceConnectorConfig.OFFSETS_TOPIC_GROUP
         );
         assertEquals(expectedGroups, result.groups());
         assertEquals(1, result.errorCount());
-        // Base connector config has 19 fields, connector's configs add 7, and 2 producer overrides
-        assertEquals(28, result.configs().size());
+        // Base connector config has 20 fields, connector's configs add 7, and 2 producer overrides
+        assertEquals(29, result.configs().size());
         assertTrue(result.configs().stream().anyMatch(
                 configInfo -> ackConfigKey.equals(configInfo.configValue().name()) && configInfo.configValue().errors().isEmpty()));
         assertTrue(result.configs().stream().anyMatch(

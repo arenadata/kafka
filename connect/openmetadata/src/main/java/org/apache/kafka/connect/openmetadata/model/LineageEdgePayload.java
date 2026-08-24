@@ -16,7 +16,12 @@
  */
 package org.apache.kafka.connect.openmetadata.model;
 
+import org.apache.kafka.connect.metadata.ColumnLineage;
+
 import com.fasterxml.jackson.annotation.JsonInclude;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class LineageEdgePayload {
@@ -27,12 +32,24 @@ public class LineageEdgePayload {
     }
 
     public LineageEdgePayload(EntityRef from, EntityRef to, EntityRef pipeline) {
+        this(from, to, pipeline, List.of());
+    }
+
+    public LineageEdgePayload(EntityRef from,
+                              EntityRef to,
+                              EntityRef pipeline,
+                              List<ColumnLineage> columnsLineage) {
         this.edge = new Edge();
         this.edge.fromEntity = from;
         this.edge.toEntity = to;
-        if (pipeline != null) {
+        if (pipeline != null || !columnsLineage.isEmpty()) {
             this.edge.lineageDetails = new LineageDetails();
             this.edge.lineageDetails.pipeline = pipeline;
+            if (!columnsLineage.isEmpty()) {
+                this.edge.lineageDetails.columnsLineage = columnsLineage.stream()
+                        .map(ColumnLineagePayload::new)
+                        .collect(Collectors.toList());
+            }
         }
     }
 
@@ -44,5 +61,6 @@ public class LineageEdgePayload {
 
     public static final class LineageDetails {
         public EntityRef pipeline;
+        public List<ColumnLineagePayload> columnsLineage;
     }
 }

@@ -34,7 +34,8 @@ COPY docker/connect/run /usr/local/bin/run-kafka-connect
 RUN chmod 755 /usr/local/bin/run-kafka-connect
 
 ENV KAFKA_HOME=/opt/kafka \
-    KAFKA_HEAP_OPTS="-Xms256M -Xmx2G"
+    KAFKA_HEAP_OPTS="-Xms256M -Xmx2G" \
+    CONNECT_PLUGIN_PATH="/opt/kafka/plugins"
 
 EXPOSE 8083
 

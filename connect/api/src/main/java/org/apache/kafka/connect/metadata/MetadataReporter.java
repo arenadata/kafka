@@ -33,6 +33,9 @@ import java.io.Closeable;
  * Reporting is best-effort: {@link #report(MetadataEvent)} must not block the
  * data path and must not throw. Implementations are expected to buffer events
  * internally and deliver them asynchronously.
+ * <p>
+ * Reporter JARs installed through the worker's {@code plugin.path} must include
+ * a {@link java.util.ServiceLoader} provider configuration for this interface.
  *
  * @since 4.2
  */

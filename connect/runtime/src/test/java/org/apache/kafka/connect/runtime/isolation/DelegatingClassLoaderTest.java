@@ -128,6 +128,7 @@ public class DelegatingClassLoaderTest {
             new TreeSet<>(),
             new TreeSet<>(),
             new TreeSet<>(),
+            new TreeSet<>(),
             new TreeSet<>()
         );
     }

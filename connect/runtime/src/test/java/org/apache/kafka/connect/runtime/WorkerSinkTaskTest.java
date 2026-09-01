@@ -49,6 +49,7 @@ import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperator;
 import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperatorTest;
 import org.apache.kafka.connect.runtime.isolation.PluginClassLoader;
 import org.apache.kafka.connect.runtime.isolation.TestPlugins;
+import org.apache.kafka.connect.runtime.metadata.WorkerMetadataReporter;
 import org.apache.kafka.connect.runtime.standalone.StandaloneConfig;
 import org.apache.kafka.connect.sink.SinkConnector;
 import org.apache.kafka.connect.sink.SinkRecord;
@@ -170,6 +171,8 @@ public class WorkerSinkTaskTest {
     private KafkaConsumer<byte[], byte[]> consumer;
     @Mock
     private ErrorHandlingMetrics errorHandlingMetrics;
+    @Mock
+    private WorkerMetadataReporter workerMetadataReporter;
     private final ArgumentCaptor<ConsumerRebalanceListener> rebalanceListener = ArgumentCaptor.forClass(ConsumerRebalanceListener.class);
 
     private long recordsReturnedTp1;
@@ -226,7 +229,8 @@ public class WorkerSinkTaskTest {
                 taskId, task, statusListener, initialState, workerConfig, ClusterConfigState.EMPTY, connectMetrics,
                 keyConverterPlugin, valueConverterPlugin, errorMetrics, headerConverterPlugin,
                 transformationChain, consumer, loader, time,
-                retryWithToleranceOperator, null, null, statusBackingStore, errorReportersSupplier, null, TestPlugins.noOpLoaderSwap());
+                retryWithToleranceOperator, null, workerMetadataReporter, statusBackingStore, errorReportersSupplier, null,
+                TestPlugins.noOpLoaderSwap());
     }
 
     @AfterEach
@@ -571,6 +575,32 @@ public class WorkerSinkTaskTest {
 
         RuntimeException thrownException = assertThrows(RuntimeException.class, () -> workerTask.iteration());
         assertEquals(exception, thrownException);
+    }
+
+    @Test
+    public void testMetadataReporterFlushedOnPartitionLoss() {
+        createTask(initialState);
+
+        workerTask.initialize(TASK_CONFIG);
+        workerTask.initializeAndStart();
+        verifyInitializeTask();
+
+        rebalanceListener.getValue().onPartitionsLost(INITIAL_ASSIGNMENT);
+
+        verify(workerMetadataReporter).flush();
+    }
+
+    @Test
+    public void testMetadataReporterFlushedOnPartitionRevocation() {
+        createTask(initialState);
+
+        workerTask.initialize(TASK_CONFIG);
+        workerTask.initializeAndStart();
+        verifyInitializeTask();
+
+        rebalanceListener.getValue().onPartitionsRevoked(INITIAL_ASSIGNMENT);
+
+        verify(workerMetadataReporter).flush();
     }
 
     @Test

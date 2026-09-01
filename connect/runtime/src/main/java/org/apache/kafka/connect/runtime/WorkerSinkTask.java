@@ -825,6 +825,14 @@ class WorkerSinkTask extends WorkerTask<ConsumerRecord<byte[], byte[]>, SinkReco
                 // The consumer swallows exceptions raised in the rebalance listener, so we need to store
                 // exceptions and rethrow when poll() returns.
                 rebalanceException = e;
+            } finally {
+                if (workerMetadataReporter != null) {
+                    try {
+                        workerMetadataReporter.flush();
+                    } catch (Throwable t) {
+                        log.warn("{} Failed to flush metadata reporter during rebalance", WorkerSinkTask.this, t);
+                    }
+                }
             }
 
             // Make sure we don't have any leftover data since offsets for these partitions will be reset to committed positions

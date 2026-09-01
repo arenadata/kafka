@@ -18,6 +18,7 @@ package org.apache.kafka.connect.runtime.isolation;
 
 import org.apache.kafka.common.config.provider.ConfigProvider;
 import org.apache.kafka.connect.connector.policy.ConnectorClientConfigOverridePolicy;
+import org.apache.kafka.connect.metadata.MetadataReporter;
 import org.apache.kafka.connect.rest.ConnectRestExtension;
 import org.apache.kafka.connect.sink.SinkConnector;
 import org.apache.kafka.connect.source.SourceConnector;
@@ -42,8 +43,8 @@ import java.util.SortedSet;
  *     <li>Static initialization of the class completes without throwing an exception</li>
  *     <li>The no-args constructor completes without throwing an exception</li>
  *     <li>The class is a subclass of {@link SinkConnector}, {@link SourceConnector}, {@link Converter},
- *         {@link HeaderConverter}, {@link Transformation}, {@link Predicate}, {@link ConfigProvider},
- *         {@link ConnectRestExtension}, or {@link ConnectorClientConfigOverridePolicy}
+ *         {@link HeaderConverter}, {@link Transformation}, {@link Predicate}, {@link MetadataReporter},
+ *         {@link ConfigProvider}, {@link ConnectRestExtension}, or {@link ConnectorClientConfigOverridePolicy}
  *     </li>
  *     <li>The class has a {@link ServiceLoader} compatible manifest file or module declaration</li>
  * </ul>
@@ -62,6 +63,7 @@ public class ServiceLoaderScanner extends PluginScanner {
                 getServiceLoaderPluginDesc(PluginType.HEADER_CONVERTER, source),
                 getTransformationPluginDesc(source),
                 getPredicatePluginDesc(source),
+                getServiceLoaderPluginDesc(PluginType.METADATA_REPORTER, source),
                 getServiceLoaderPluginDesc(PluginType.CONFIGPROVIDER, source),
                 getServiceLoaderPluginDesc(PluginType.REST_EXTENSION, source),
                 getServiceLoaderPluginDesc(PluginType.CONNECTOR_CLIENT_CONFIG_OVERRIDE_POLICY, source)

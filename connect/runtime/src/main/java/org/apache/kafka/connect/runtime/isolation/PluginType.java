@@ -18,6 +18,7 @@ package org.apache.kafka.connect.runtime.isolation;
 
 import org.apache.kafka.common.config.provider.ConfigProvider;
 import org.apache.kafka.connect.connector.policy.ConnectorClientConfigOverridePolicy;
+import org.apache.kafka.connect.metadata.MetadataReporter;
 import org.apache.kafka.connect.rest.ConnectRestExtension;
 import org.apache.kafka.connect.sink.SinkConnector;
 import org.apache.kafka.connect.source.SourceConnector;
@@ -37,6 +38,7 @@ public enum PluginType {
     HEADER_CONVERTER(HeaderConverter.class),
     TRANSFORMATION(Transformation.class),
     PREDICATE(Predicate.class),
+    METADATA_REPORTER(MetadataReporter.class),
     CONFIGPROVIDER(ConfigProvider.class),
     REST_EXTENSION(ConnectRestExtension.class),
     CONNECTOR_CLIENT_CONFIG_OVERRIDE_POLICY(ConnectorClientConfigOverridePolicy.class);

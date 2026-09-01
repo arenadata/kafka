@@ -85,6 +85,7 @@ public class TestPlugins {
         SAMPLING_CONNECTOR("sampling-connector"),
         SAMPLING_CONVERTER("sampling-converter"),
         SAMPLING_HEADER_CONVERTER("sampling-header-converter"),
+        SAMPLING_METADATA_REPORTER("sampling-metadata-reporter"),
         SERVICE_LOADER("service-loader"),
         SUBCLASS_OF_CLASSPATH("subclass-of-classpath"),
         CLASSPATH_CONVERTER("classpath-converter");
@@ -241,6 +242,11 @@ public class TestPlugins {
          * which samples information about its method calls.
          */
         SAMPLING_HEADER_CONVERTER(TestPackage.SAMPLING_HEADER_CONVERTER, "test.plugins.SamplingHeaderConverter"),
+        /**
+         * A {@link org.apache.kafka.connect.metadata.MetadataReporter}
+         * used to verify isolated plugin loading.
+         */
+        SAMPLING_METADATA_REPORTER(TestPackage.SAMPLING_METADATA_REPORTER, "test.plugins.SamplingMetadataReporter"),
         /**
          * A plugin which uses a {@link java.util.ServiceLoader}
          * to load internal classes, and samples information about their initialization.

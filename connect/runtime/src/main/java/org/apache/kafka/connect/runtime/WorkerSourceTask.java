@@ -29,6 +29,7 @@ import org.apache.kafka.connect.runtime.errors.RetryWithToleranceOperator;
 import org.apache.kafka.connect.runtime.errors.Stage;
 import org.apache.kafka.connect.runtime.errors.ToleranceType;
 import org.apache.kafka.connect.runtime.isolation.LoaderSwap;
+import org.apache.kafka.connect.runtime.metadata.WorkerMetadataReporter;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.kafka.connect.source.SourceTask;
 import org.apache.kafka.connect.storage.CloseableOffsetStorageReader;
@@ -94,13 +95,14 @@ class WorkerSourceTask extends AbstractWorkerSourceTask {
                             StatusBackingStore statusBackingStore,
                             Executor closeExecutor,
                             Supplier<List<ErrorReporter<SourceRecord>>> errorReportersSupplier,
+                            WorkerMetadataReporter workerMetadataReporter,
                             TaskPluginsMetadata pluginsMetadata,
                             Function<ClassLoader, LoaderSwap> pluginLoaderSwapper) {
 
         super(id, task, statusListener, initialState, configState, keyConverterPlugin, valueConverterPlugin, headerConverterPlugin, transformationChain,
                 null, producer,
                 admin, topicGroups, offsetReader, offsetWriter, offsetStore, workerConfig, connectMetrics, errorMetrics, loader,
-                time, retryWithToleranceOperator, statusBackingStore, closeExecutor, errorReportersSupplier, pluginsMetadata, pluginLoaderSwapper);
+                time, retryWithToleranceOperator, statusBackingStore, closeExecutor, errorReportersSupplier, workerMetadataReporter, pluginsMetadata, pluginLoaderSwapper);
 
         this.committableOffsets = CommittableOffsets.EMPTY;
         this.submittedRecords = new SubmittedRecords();

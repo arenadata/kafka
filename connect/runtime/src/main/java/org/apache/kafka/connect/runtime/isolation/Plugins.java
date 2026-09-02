@@ -26,6 +26,7 @@ import org.apache.kafka.connect.connector.Connector;
 import org.apache.kafka.connect.connector.Task;
 import org.apache.kafka.connect.connector.policy.ConnectorClientConfigOverridePolicy;
 import org.apache.kafka.connect.errors.ConnectException;
+import org.apache.kafka.connect.metadata.MetadataReporter;
 import org.apache.kafka.connect.runtime.WorkerConfig;
 import org.apache.kafka.connect.sink.SinkConnector;
 import org.apache.kafka.connect.source.SourceConnector;
@@ -337,6 +338,10 @@ public class Plugins {
 
     public Set<PluginDesc<Predicate<?>>> predicates() {
         return scanResult.predicates();
+    }
+
+    public Set<PluginDesc<MetadataReporter>> metadataReporters() {
+        return scanResult.metadataReporters();
     }
 
     Set<PluginDesc<Predicate<?>>> predicates(String predicateClassOrAlias) {

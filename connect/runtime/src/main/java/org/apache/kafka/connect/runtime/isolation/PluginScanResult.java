@@ -18,6 +18,7 @@ package org.apache.kafka.connect.runtime.isolation;
 
 import org.apache.kafka.common.config.provider.ConfigProvider;
 import org.apache.kafka.connect.connector.policy.ConnectorClientConfigOverridePolicy;
+import org.apache.kafka.connect.metadata.MetadataReporter;
 import org.apache.kafka.connect.rest.ConnectRestExtension;
 import org.apache.kafka.connect.sink.SinkConnector;
 import org.apache.kafka.connect.source.SourceConnector;
@@ -39,6 +40,7 @@ public class PluginScanResult {
     private final SortedSet<PluginDesc<HeaderConverter>> headerConverters;
     private final SortedSet<PluginDesc<Transformation<?>>> transformations;
     private final SortedSet<PluginDesc<Predicate<?>>> predicates;
+    private final SortedSet<PluginDesc<MetadataReporter>> metadataReporters;
     private final SortedSet<PluginDesc<ConfigProvider>> configProviders;
     private final SortedSet<PluginDesc<ConnectRestExtension>> restExtensions;
     private final SortedSet<PluginDesc<ConnectorClientConfigOverridePolicy>> connectorClientConfigPolicies;
@@ -52,6 +54,7 @@ public class PluginScanResult {
             SortedSet<PluginDesc<HeaderConverter>> headerConverters,
             SortedSet<PluginDesc<Transformation<?>>> transformations,
             SortedSet<PluginDesc<Predicate<?>>> predicates,
+            SortedSet<PluginDesc<MetadataReporter>> metadataReporters,
             SortedSet<PluginDesc<ConfigProvider>> configProviders,
             SortedSet<PluginDesc<ConnectRestExtension>> restExtensions,
             SortedSet<PluginDesc<ConnectorClientConfigOverridePolicy>> connectorClientConfigPolicies
@@ -62,12 +65,13 @@ public class PluginScanResult {
         this.headerConverters = headerConverters;
         this.transformations = transformations;
         this.predicates = predicates;
+        this.metadataReporters = metadataReporters;
         this.configProviders = configProviders;
         this.restExtensions = restExtensions;
         this.connectorClientConfigPolicies = connectorClientConfigPolicies;
         this.allPlugins =
             List.of(sinkConnectors, sourceConnectors, converters, headerConverters, transformations, predicates,
-                    configProviders, restExtensions, connectorClientConfigPolicies);
+                    metadataReporters, configProviders, restExtensions, connectorClientConfigPolicies);
     }
 
     /**
@@ -81,6 +85,7 @@ public class PluginScanResult {
                 merge(results, PluginScanResult::headerConverters),
                 merge(results, PluginScanResult::transformations),
                 merge(results, PluginScanResult::predicates),
+                merge(results, PluginScanResult::metadataReporters),
                 merge(results, PluginScanResult::configProviders),
                 merge(results, PluginScanResult::restExtensions),
                 merge(results, PluginScanResult::connectorClientConfigPolicies)
@@ -117,6 +122,10 @@ public class PluginScanResult {
 
     public SortedSet<PluginDesc<Predicate<?>>> predicates() {
         return predicates;
+    }
+
+    public SortedSet<PluginDesc<MetadataReporter>> metadataReporters() {
+        return metadataReporters;
     }
 
     public SortedSet<PluginDesc<ConfigProvider>> configProviders() {

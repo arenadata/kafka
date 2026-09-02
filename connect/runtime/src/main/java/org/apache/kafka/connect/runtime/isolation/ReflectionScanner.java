@@ -18,6 +18,7 @@ package org.apache.kafka.connect.runtime.isolation;
 
 import org.apache.kafka.common.config.provider.ConfigProvider;
 import org.apache.kafka.connect.connector.policy.ConnectorClientConfigOverridePolicy;
+import org.apache.kafka.connect.metadata.MetadataReporter;
 import org.apache.kafka.connect.rest.ConnectRestExtension;
 import org.apache.kafka.connect.sink.SinkConnector;
 import org.apache.kafka.connect.source.SourceConnector;
@@ -56,8 +57,9 @@ import io.github.classgraph.ScanResult;
  *         <ul>
  *             <li>Is a subclass of {@link SinkConnector}, {@link SourceConnector}, {@link Converter},
  *             {@link HeaderConverter}, {@link Transformation}, or {@link Predicate}</li>
- *             <li>Is a subclass of {@link ConfigProvider}, {@link ConnectRestExtension}, or
- *             {@link ConnectorClientConfigOverridePolicy}, and has a {@link ServiceLoader} compatible
+ *             <li>Is a subclass of {@link MetadataReporter}, {@link ConfigProvider},
+ *             {@link ConnectRestExtension}, or {@link ConnectorClientConfigOverridePolicy}, and has a
+ *             {@link ServiceLoader} compatible
  *             manifest file or module declaration</li>
  *         </ul>
  *     </li>
@@ -90,6 +92,7 @@ public class ReflectionScanner extends PluginScanner {
                   getPluginDesc(classGraph, PluginType.HEADER_CONVERTER, source),
                   getTransformationPluginDesc(source, classGraph),
                   getPredicatePluginDesc(source, classGraph),
+                  getServiceLoaderPluginDesc(PluginType.METADATA_REPORTER, source),
                   getServiceLoaderPluginDesc(PluginType.CONFIGPROVIDER, source),
                   getServiceLoaderPluginDesc(PluginType.REST_EXTENSION, source),
                   getServiceLoaderPluginDesc(PluginType.CONNECTOR_CLIENT_CONFIG_OVERRIDE_POLICY, source)

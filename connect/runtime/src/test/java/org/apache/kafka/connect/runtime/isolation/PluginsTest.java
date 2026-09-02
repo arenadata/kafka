@@ -33,6 +33,7 @@ import org.apache.kafka.connect.data.SchemaAndValue;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.json.JsonConverter;
 import org.apache.kafka.connect.json.JsonConverterConfig;
+import org.apache.kafka.connect.metadata.MetadataReporter;
 import org.apache.kafka.connect.rest.ConnectRestExtension;
 import org.apache.kafka.connect.rest.ConnectRestExtensionContext;
 import org.apache.kafka.connect.runtime.WorkerConfig;
@@ -107,6 +108,7 @@ public class PluginsTest {
         missingPluginClass = sinkConnectors.first().className();
         nonEmpty = new PluginScanResult(
             sinkConnectors,
+            new TreeSet<>(),
             new TreeSet<>(),
             new TreeSet<>(),
             new TreeSet<>(),
@@ -220,6 +222,14 @@ public class PluginsTest {
                 Converter.class
         );
         assertNotNull(converter);
+    }
+
+    @Test
+    public void shouldLoadMetadataReporterInIsolation() throws Exception {
+        Object plugin = plugins.newPlugin(TestPlugin.SAMPLING_METADATA_REPORTER.className(), null);
+
+        MetadataReporter reporter = assertInstanceOf(MetadataReporter.class, plugin);
+        assertInstanceOf(PluginClassLoader.class, reporter.getClass().getClassLoader());
     }
 
     @Test

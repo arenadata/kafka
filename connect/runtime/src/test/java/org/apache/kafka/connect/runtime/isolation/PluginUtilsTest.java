@@ -515,6 +515,7 @@ public class PluginUtilsTest {
                 new TreeSet<>(),
                 new TreeSet<>(),
                 new TreeSet<>(),
+                new TreeSet<>(),
                 new TreeSet<>()
         );
         Map<String, String> actualAliases = PluginUtils.computeAliases(result);
@@ -537,6 +538,7 @@ public class PluginUtilsTest {
         assertEquals(2, sinkConnectors.size());
         PluginScanResult result = new PluginScanResult(
                 sinkConnectors,
+                new TreeSet<>(),
                 new TreeSet<>(),
                 new TreeSet<>(),
                 new TreeSet<>(),
@@ -568,6 +570,7 @@ public class PluginUtilsTest {
                 new TreeSet<>(),
                 new TreeSet<>(),
                 new TreeSet<>(),
+                new TreeSet<>(),
                 new TreeSet<>()
         );
         Map<String, String> actualAliases = PluginUtils.computeAliases(result);
@@ -590,6 +593,7 @@ public class PluginUtilsTest {
                 converters,
                 new TreeSet<>(),
                 transformations,
+                new TreeSet<>(),
                 new TreeSet<>(),
                 new TreeSet<>(),
                 new TreeSet<>(),

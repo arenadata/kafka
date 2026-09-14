@@ -1,0 +1,74 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Publish Kafka Connect image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare image name
+        id: image
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version=//p' gradle.properties)
+          if [[ ! "$version" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid Docker tag in gradle.properties: $version" >&2
+            exit 1
+          fi
+          owner=$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          printf 'name=ghcr.io/%s/kafka-connect:%s\n' "$owner" "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Java and Gradle
+        uses: ./.github/actions/setup-gradle
+        with:
+          java-version: '21'
+
+      - name: Build Kafka Connect distribution
+        env:
+          # Optional credentials for Maven packages outside this repository.
+          GITHUB_USERNAME: ${{ vars.PACKAGES_READ_USERNAME || github.actor }}
+          GITHUB_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN || secrets.GITHUB_TOKEN }}
+        run: ./gradlew clean connectReleaseTarGz --no-scan
+
+      - name: Build Docker image
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          docker build --no-cache \
+            -f docker/connect/Dockerfile \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            -t "$IMAGE" .
+
+      - name: Publish Docker image
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE"
+          printf 'Published `%s`\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"

@@ -295,6 +295,7 @@ public class GroupCoordinatorService implements GroupCoordinator {
                 groupCoordinatorMetrics,
                 groupConfigManager,
                 persister,
+                time,
                 timer,
                 partitionMetadataClient
             );
@@ -352,6 +353,12 @@ public class GroupCoordinatorService implements GroupCoordinator {
     private final PartitionMetadataClient partitionMetadataClient;
 
     /**
+     * The sampler computing the group lag metrics. Null when
+     * {@link GroupCoordinatorConfig#lagMetricsEnable()} is false.
+     */
+    private final GroupLagSampler groupLagSampler;
+
+    /**
      * The number of partitions of the __consumer_offsets topics. This is provided
      * when the component is started.
      */
@@ -371,7 +378,9 @@ public class GroupCoordinatorService implements GroupCoordinator {
      * @param groupCoordinatorMetrics   The group coordinator metrics.
      * @param groupConfigManager        The group config manager.
      * @param persister                 The persister.
+     * @param time                      The time.
      * @param timer                     The timer.
+     * @param partitionMetadataClient   The client used to resolve partition end offsets.
      */
     GroupCoordinatorService(
         LogContext logContext,
@@ -380,6 +389,7 @@ public class GroupCoordinatorService implements GroupCoordinator {
         GroupCoordinatorMetrics groupCoordinatorMetrics,
         GroupConfigManager groupConfigManager,
         Persister persister,
+        Time time,
         Timer timer,
         PartitionMetadataClient partitionMetadataClient
     ) {
@@ -396,6 +406,15 @@ public class GroupCoordinatorService implements GroupCoordinator {
             .map(ConsumerGroupPartitionAssignor::name)
             .collect(Collectors.toSet());
         this.partitionMetadataClient = partitionMetadataClient;
+        this.groupLagSampler = config.lagMetricsEnable() ? new GroupLagSampler(
+            logContext,
+            runtime,
+            partitionMetadataClient,
+            groupCoordinatorMetrics,
+            time,
+            timer,
+            config.lagMetricsIntervalMs()
+        ) : null;
     }
 
     /**
@@ -2360,6 +2379,9 @@ public class GroupCoordinatorService implements GroupCoordinator {
         log.info("Starting up.");
         numPartitions = groupMetadataTopicPartitionCount.getAsInt();
         isActive.set(true);
+        if (groupLagSampler != null) {
+            groupLagSampler.start();
+        }
         log.info("Startup complete.");
     }
 
@@ -2375,6 +2397,9 @@ public class GroupCoordinatorService implements GroupCoordinator {
 
         log.info("Shutting down.");
         isActive.set(false);
+        if (groupLagSampler != null) {
+            Utils.closeQuietly(groupLagSampler, "group lag sampler");
+        }
         Utils.closeQuietly(runtime, "coordinator runtime");
         Utils.closeQuietly(groupCoordinatorMetrics, "group coordinator metrics");
         Utils.closeQuietly(groupConfigManager, "group config manager");

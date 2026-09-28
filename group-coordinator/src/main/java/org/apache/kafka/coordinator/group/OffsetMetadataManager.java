@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.coordinator.group;
 
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.GroupIdNotFoundException;
@@ -57,7 +58,9 @@ import org.apache.kafka.timeline.TimelineHashSet;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1043,6 +1046,40 @@ public class OffsetMetadataManager {
         return new OffsetFetchResponseData.OffsetFetchResponseGroup()
             .setGroupId(request.groupId())
             .setTopics(topicResponses);
+    }
+
+    /**
+     * Snapshots the committed offsets of every group at the given committed offset.
+     * Pending transactional offsets are not included; only offsets whose transaction
+     * has been committed are visible.
+     *
+     * @param committedOffset   The committed offset to read the timeline at.
+     *
+     * @return A map of group id to the committed offset of each of its topic partitions.
+     *         Groups without any committed offset are not present.
+     */
+    public Map<String, Map<TopicPartition, Long>> committedOffsetsSnapshot(long committedOffset) {
+        final Map<String, Map<TopicPartition, Long>> snapshot = new HashMap<>();
+
+        offsets.offsetsByGroup.entrySet(committedOffset).forEach(groupEntry -> {
+            final Map<TopicPartition, Long> groupOffsets = new HashMap<>();
+
+            groupEntry.getValue().entrySet(committedOffset).forEach(topicEntry -> {
+                final String topic = topicEntry.getKey();
+                topicEntry.getValue().entrySet(committedOffset).forEach(partitionEntry ->
+                    groupOffsets.put(
+                        new TopicPartition(topic, partitionEntry.getKey()),
+                        partitionEntry.getValue().committedOffset
+                    )
+                );
+            });
+
+            if (!groupOffsets.isEmpty()) {
+                snapshot.put(groupEntry.getKey(), groupOffsets);
+            }
+        });
+
+        return snapshot;
     }
 
     /**

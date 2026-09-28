@@ -50,6 +50,7 @@ import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
 import static org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM;
 import static org.apache.kafka.common.config.ConfigDef.Range.atLeast;
 import static org.apache.kafka.common.config.ConfigDef.Range.between;
+import static org.apache.kafka.common.config.ConfigDef.Type.BOOLEAN;
 import static org.apache.kafka.common.config.ConfigDef.Type.INT;
 import static org.apache.kafka.common.config.ConfigDef.Type.LIST;
 import static org.apache.kafka.common.config.ConfigDef.Type.LONG;
@@ -153,6 +154,21 @@ public class GroupCoordinatorConfig {
     public static final String OFFSETS_RETENTION_CHECK_INTERVAL_MS_CONFIG = "offsets.retention.check.interval.ms";
     public static final long OFFSETS_RETENTION_CHECK_INTERVAL_MS_DEFAULT = 600000L;
     public static final String OFFSETS_RETENTION_CHECK_INTERVAL_MS_DOC = "Frequency at which to check for stale offsets";
+
+    public static final String GROUP_COORDINATOR_LAG_METRICS_ENABLE_CONFIG = "group.coordinator.lag.metrics.enable";
+    public static final boolean GROUP_COORDINATOR_LAG_METRICS_ENABLE_DEFAULT = true;
+    public static final String GROUP_COORDINATOR_LAG_METRICS_ENABLE_DOC = "Whether the group coordinator periodically computes the lag of the " +
+        "classic, consumer and streams groups it hosts and exposes it as the group-lag-max, group-lag-sum and group-lag-sample-age-ms " +
+        "metrics. Share groups are not included.";
+    public static final String GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_CONFIG = "group.coordinator.lag.metrics.interval.ms";
+    public static final long GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_DEFAULT = 60 * 1000L;
+    public static final String GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_DOC = "The interval at which the group coordinator samples the committed " +
+        "offsets of the groups it hosts and the log end offsets of their partitions to compute the group lag metrics.";
+    public static final String GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_CONFIG = "group.coordinator.lag.metrics.max.groups";
+    public static final int GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_DEFAULT = 1000;
+    public static final String GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_DOC = "The maximum number of groups for which per-group lag metrics " +
+        "(group-lag-max and group-lag-sum tagged with the group id) are exposed by a broker. Groups beyond this number only contribute " +
+        "to the untagged group-lag-max metric.";
 
     ///
     /// Classic group configs
@@ -406,6 +422,11 @@ public class GroupCoordinatorConfig {
         .define(OFFSETS_RETENTION_MINUTES_CONFIG, INT, OFFSETS_RETENTION_MINUTES_DEFAULT, atLeast(1), HIGH, OFFSETS_RETENTION_MINUTES_DOC)
         .define(OFFSETS_RETENTION_CHECK_INTERVAL_MS_CONFIG, LONG, OFFSETS_RETENTION_CHECK_INTERVAL_MS_DEFAULT, atLeast(1), HIGH, OFFSETS_RETENTION_CHECK_INTERVAL_MS_DOC)
 
+        // Lag metrics configs
+        .define(GROUP_COORDINATOR_LAG_METRICS_ENABLE_CONFIG, BOOLEAN, GROUP_COORDINATOR_LAG_METRICS_ENABLE_DEFAULT, MEDIUM, GROUP_COORDINATOR_LAG_METRICS_ENABLE_DOC)
+        .define(GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_CONFIG, LONG, GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_DEFAULT, atLeast(1000), MEDIUM, GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_DOC)
+        .define(GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_CONFIG, INT, GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_DEFAULT, atLeast(0), MEDIUM, GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_DOC)
+
         // Classic group configs
         .define(GROUP_MIN_SESSION_TIMEOUT_MS_CONFIG, INT, GROUP_MIN_SESSION_TIMEOUT_MS_DEFAULT, MEDIUM, GROUP_MIN_SESSION_TIMEOUT_MS_DOC)
         .define(GROUP_MAX_SESSION_TIMEOUT_MS_CONFIG, INT, GROUP_MAX_SESSION_TIMEOUT_MS_DEFAULT, MEDIUM, GROUP_MAX_SESSION_TIMEOUT_MS_DOC)
@@ -477,6 +498,9 @@ public class GroupCoordinatorConfig {
     private final int classicGroupMinSessionTimeoutMs;
     private final int classicGroupMaxSessionTimeoutMs;
     private final long offsetsRetentionCheckIntervalMs;
+    private final boolean lagMetricsEnable;
+    private final long lagMetricsIntervalMs;
+    private final int lagMetricsMaxGroups;
     private final long offsetsRetentionMs;
     private final int offsetCommitTimeoutMs;
     private final ConsumerGroupMigrationPolicy consumerGroupMigrationPolicy;
@@ -535,6 +559,9 @@ public class GroupCoordinatorConfig {
         this.classicGroupMinSessionTimeoutMs = config.getInt(GroupCoordinatorConfig.GROUP_MIN_SESSION_TIMEOUT_MS_CONFIG);
         this.classicGroupMaxSessionTimeoutMs = config.getInt(GroupCoordinatorConfig.GROUP_MAX_SESSION_TIMEOUT_MS_CONFIG);
         this.offsetsRetentionCheckIntervalMs = config.getLong(GroupCoordinatorConfig.OFFSETS_RETENTION_CHECK_INTERVAL_MS_CONFIG);
+        this.lagMetricsEnable = config.getBoolean(GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_ENABLE_CONFIG);
+        this.lagMetricsIntervalMs = config.getLong(GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_CONFIG);
+        this.lagMetricsMaxGroups = config.getInt(GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_CONFIG);
         this.offsetsRetentionMs = config.getInt(GroupCoordinatorConfig.OFFSETS_RETENTION_MINUTES_CONFIG) * 60L * 1000L;
         this.offsetCommitTimeoutMs = config.getInt(GroupCoordinatorConfig.OFFSET_COMMIT_TIMEOUT_MS_CONFIG);
         this.consumerGroupMigrationPolicy = ConsumerGroupMigrationPolicy.parse(
@@ -996,6 +1023,27 @@ public class GroupCoordinatorConfig {
      */
     public long offsetsRetentionCheckIntervalMs() {
         return offsetsRetentionCheckIntervalMs;
+    }
+
+    /**
+     * Whether the group coordinator computes and exposes group lag metrics.
+     */
+    public boolean lagMetricsEnable() {
+        return lagMetricsEnable;
+    }
+
+    /**
+     * The interval at which group lag is sampled.
+     */
+    public long lagMetricsIntervalMs() {
+        return lagMetricsIntervalMs;
+    }
+
+    /**
+     * The maximum number of groups with per-group lag metrics per broker.
+     */
+    public int lagMetricsMaxGroups() {
+        return lagMetricsMaxGroups;
     }
 
     /**

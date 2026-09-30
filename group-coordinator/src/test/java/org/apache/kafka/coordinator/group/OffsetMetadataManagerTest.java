@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.coordinator.group;
 
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.CoordinatorNotAvailableException;
 import org.apache.kafka.common.errors.GroupIdNotFoundException;
@@ -3749,6 +3750,170 @@ public class OffsetMetadataManagerTest {
         );
 
         verify(context.metrics).record(OFFSET_DELETIONS_SENSOR_NAME, 2);
+    }
+
+    @Test
+    public void testCommittedOffsetsSnapshotAtDifferentCommittedOffset() {
+        OffsetMetadataManagerTestContext context = new OffsetMetadataManagerTestContext.Builder().build();
+
+        context.groupMetadataManager.getOrMaybeCreatePersistedConsumerGroup("group", true);
+        context.groupMetadataManager.getOrMaybeCreatePersistedConsumerGroup("other", true);
+
+        TopicPartition foo0 = new TopicPartition("foo", 0);
+        TopicPartition foo1 = new TopicPartition("foo", 1);
+        TopicPartition bar0 = new TopicPartition("bar", 0);
+
+        assertEquals(Map.of(), context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE));
+
+        context.commitOffset("group", "foo", 0, 100L, 1);
+        context.commitOffset("group", "foo", 1, 110L, 1);
+        context.commitOffset("other", "bar", 0, 200L, 1);
+        context.commitOffset("group", "foo", 1, 111L, 2);
+        context.commitOffset("other", "bar", 1, 210L, 1);
+        assertEquals(5, context.lastWrittenOffset);
+
+        // Nothing is visible at committed offset 0.
+        assertEquals(Map.of(), context.offsetMetadataManager.committedOffsetsSnapshot(0L));
+
+        // Only the first commit is visible at committed offset 1.
+        assertEquals(
+            Map.of("group", Map.of(foo0, 100L)),
+            context.offsetMetadataManager.committedOffsetsSnapshot(1L)
+        );
+
+        // Both groups are visible at committed offset 3, foo-1 still has its first offset.
+        assertEquals(
+            Map.of(
+                "group", Map.of(foo0, 100L, foo1, 110L),
+                "other", Map.of(bar0, 200L)
+            ),
+            context.offsetMetadataManager.committedOffsetsSnapshot(3L)
+        );
+
+        // The updated foo-1 offset is visible at committed offset 4.
+        assertEquals(
+            Map.of(
+                "group", Map.of(foo0, 100L, foo1, 111L),
+                "other", Map.of(bar0, 200L)
+            ),
+            context.offsetMetadataManager.committedOffsetsSnapshot(4L)
+        );
+
+        // Everything is visible at the latest offset.
+        assertEquals(
+            Map.of(
+                "group", Map.of(foo0, 100L, foo1, 111L),
+                "other", Map.of(bar0, 200L, new TopicPartition("bar", 1), 210L)
+            ),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+    }
+
+    @Test
+    public void testCommittedOffsetsSnapshotExcludesPendingTransactionalOffsets() {
+        OffsetMetadataManagerTestContext context = new OffsetMetadataManagerTestContext.Builder().build();
+
+        context.groupMetadataManager.getOrMaybeCreatePersistedConsumerGroup("group", true);
+
+        TopicPartition foo0 = new TopicPartition("foo", 0);
+        TopicPartition foo1 = new TopicPartition("foo", 1);
+
+        context.commitOffset("group", "foo", 0, 100L, 1);
+        context.commit();
+
+        // Pending transactional offsets are not visible until the transaction is committed.
+        context.commitOffset(10L, "group", "foo", 0, 101L, 1, context.time.milliseconds());
+        context.commitOffset(10L, "group", "foo", 1, 111L, 1, context.time.milliseconds());
+        assertEquals(
+            Map.of("group", Map.of(foo0, 100L)),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+
+        context.replayEndTransactionMarker(10L, TransactionResult.COMMIT);
+        assertEquals(
+            Map.of("group", Map.of(foo0, 101L, foo1, 111L)),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+    }
+
+    @Test
+    public void testCommittedOffsetsSnapshotSkipsOffsetsOfRecreatedTopic() {
+        Uuid oldFooTopicId = Uuid.randomUuid();
+        Uuid newFooTopicId = Uuid.randomUuid();
+        Uuid barTopicId = Uuid.randomUuid();
+        TopicPartition foo0 = new TopicPartition("foo", 0);
+        TopicPartition foo1 = new TopicPartition("foo", 1);
+        TopicPartition bar0 = new TopicPartition("bar", 0);
+
+        OffsetMetadataManagerTestContext context = new OffsetMetadataManagerTestContext.Builder()
+            .withMetadataImage(new KRaftCoordinatorMetadataImage(new MetadataImageBuilder()
+                .addTopic(oldFooTopicId, "foo", 3)
+                .build()))
+            .build();
+        long now = context.time.milliseconds();
+
+        // Committed against the current foo.
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "group", oldFooTopicId, "foo", 0, 5000L, 1, now);
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "stale-group", oldFooTopicId, "foo", 0, 7000L, 1, now);
+        // Committed without a topic id: it cannot be checked and is always kept.
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "group", Uuid.ZERO_UUID, "foo", 1, 120L, 1, now);
+        // Topic missing from the metadata image: it cannot be checked and is kept.
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "group", barTopicId, "bar", 0, 200L, 1, now);
+
+        assertEquals(
+            Map.of(
+                "group", Map.of(foo0, 5000L, foo1, 120L, bar0, 200L),
+                "stale-group", Map.of(foo0, 7000L)
+            ),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+
+        // foo is deleted and recreated, and the offset cleanup was missed.
+        CoordinatorMetadataImage recreatedImage = new KRaftCoordinatorMetadataImage(new MetadataImageBuilder()
+            .addTopic(newFooTopicId, "foo", 3)
+            .build());
+        context.offsetMetadataManager.onMetadataUpdate(recreatedImage.emptyDelta(), recreatedImage);
+
+        // Offsets of the previous foo are skipped, and a group left without any offset is dropped.
+        assertEquals(
+            Map.of("group", Map.of(foo1, 120L, bar0, 200L)),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+
+        // A commit against the recreated foo is visible again.
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "stale-group", newFooTopicId, "foo", 0, 10L, 1, now);
+        assertEquals(
+            Map.of(
+                "group", Map.of(foo1, 120L, bar0, 200L),
+                "stale-group", Map.of(foo0, 10L)
+            ),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+    }
+
+    @Test
+    public void testCommittedOffsetsSnapshotAfterTopicsDeleted() {
+        OffsetMetadataManagerTestContext context = new OffsetMetadataManagerTestContext.Builder().build();
+
+        Uuid fooTopicId = Uuid.randomUuid();
+        TopicPartition foo0 = new TopicPartition("foo", 0);
+        TopicPartition bar0 = new TopicPartition("bar", 0);
+
+        context.commitOffset("group", "foo", 0, 100L, 1);
+        context.commitOffset("group", "bar", 0, 200L, 1);
+        assertEquals(
+            Map.of("group", Map.of(foo0, 100L, bar0, 200L)),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+
+        context.deleteTopics(List.of(new DeletedTopic(fooTopicId, "foo")));
+        assertEquals(
+            Map.of("group", Map.of(bar0, 200L)),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+
+        context.deleteTopics(List.of(new DeletedTopic(Uuid.randomUuid(), "bar")));
+        assertEquals(Map.of(), context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE));
     }
 
     @Test

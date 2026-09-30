@@ -88,6 +88,7 @@ import org.apache.kafka.common.security.auth.KafkaPrincipal;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.BufferSupplier;
 import org.apache.kafka.common.utils.LogContext;
+import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRuntime;
@@ -115,6 +116,7 @@ import org.apache.kafka.server.share.persister.ReadShareGroupStateSummaryResult;
 import org.apache.kafka.server.share.persister.TopicData;
 import org.apache.kafka.server.util.PartitionMetadataClient;
 import org.apache.kafka.server.util.timer.MockTimer;
+import org.apache.kafka.server.util.timer.Timer;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -156,6 +158,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -187,6 +190,71 @@ public class GroupCoordinatorServiceTest {
 
     private GroupCoordinatorConfig createConfig() {
         return GroupCoordinatorConfigTest.createGroupCoordinatorConfig(4096, 600000L, 24);
+    }
+
+    @Test
+    public void testGroupLagSamplerLifecycle() throws Exception {
+        CoordinatorRuntime<GroupCoordinatorShard, CoordinatorRecord> runtime = mockRuntime();
+        org.apache.kafka.server.util.MockTime time = new org.apache.kafka.server.util.MockTime();
+        MockTimer timer = new MockTimer(time);
+        GroupCoordinatorService service = new GroupCoordinatorServiceBuilder()
+            .setRuntime(runtime)
+            .setConfig(createConfig())
+            .setTime(time)
+            .setTimer(timer)
+            .build();
+
+        when(runtime.scheduleReadAllOperation(
+            ArgumentMatchers.eq(GroupLagSampler.SAMPLE_OPERATION_NAME),
+            ArgumentMatchers.any()
+        )).thenReturn(List.of());
+
+        long intervalMs = GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_DEFAULT;
+
+        // Nothing is sampled before startup.
+        timer.advanceClock(intervalMs + 1);
+        verify(runtime, never()).scheduleReadAllOperation(
+            ArgumentMatchers.eq(GroupLagSampler.SAMPLE_OPERATION_NAME),
+            ArgumentMatchers.any()
+        );
+
+        service.startup(() -> 1);
+        timer.advanceClock(intervalMs + 1);
+        verify(runtime, times(1)).scheduleReadAllOperation(
+            ArgumentMatchers.eq(GroupLagSampler.SAMPLE_OPERATION_NAME),
+            ArgumentMatchers.any()
+        );
+
+        // Nothing is sampled after shutdown.
+        service.shutdown();
+        timer.advanceClock(intervalMs + 1);
+        verify(runtime, times(1)).scheduleReadAllOperation(
+            ArgumentMatchers.eq(GroupLagSampler.SAMPLE_OPERATION_NAME),
+            ArgumentMatchers.any()
+        );
+    }
+
+    @Test
+    public void testGroupLagSamplerDisabled() throws Exception {
+        CoordinatorRuntime<GroupCoordinatorShard, CoordinatorRecord> runtime = mockRuntime();
+        org.apache.kafka.server.util.MockTime time = new org.apache.kafka.server.util.MockTime();
+        MockTimer timer = new MockTimer(time);
+        GroupCoordinatorService service = new GroupCoordinatorServiceBuilder()
+            .setRuntime(runtime)
+            .setConfig(GroupCoordinatorConfigTest.createGroupCoordinatorConfig(4096, 600000L, 24, Map.of(
+                GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_ENABLE_CONFIG, false
+            )))
+            .setTime(time)
+            .setTimer(timer)
+            .build();
+
+        service.startup(() -> 1);
+        timer.advanceClock(GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_DEFAULT + 1);
+        verify(runtime, never()).scheduleReadAllOperation(
+            ArgumentMatchers.eq(GroupLagSampler.SAMPLE_OPERATION_NAME),
+            ArgumentMatchers.any()
+        );
+        service.shutdown();
     }
 
     @Test
@@ -5912,7 +5980,9 @@ public class GroupCoordinatorServiceTest {
         private GroupCoordinatorMetrics metrics = new GroupCoordinatorMetrics();
         private Persister persister = new NoOpStatePersister();
         private MetadataImage metadataImage = null;
-        private PartitionMetadataClient partitionMetadataClient = null;
+        private PartitionMetadataClient partitionMetadataClient = mock(PartitionMetadataClient.class);
+        private Time time = Time.SYSTEM;
+        private Timer timer = new MockTimer();
 
         GroupCoordinatorService build() {
             return build(false);
@@ -5932,7 +6002,8 @@ public class GroupCoordinatorServiceTest {
                 metrics,
                 configManager,
                 persister,
-                new MockTimer(),
+                time,
+                timer,
                 partitionMetadataClient
             );
 
@@ -5963,6 +6034,16 @@ public class GroupCoordinatorServiceTest {
 
         public GroupCoordinatorServiceBuilder setMetrics(GroupCoordinatorMetrics metrics) {
             this.metrics = metrics;
+            return this;
+        }
+
+        public GroupCoordinatorServiceBuilder setTime(Time time) {
+            this.time = time;
+            return this;
+        }
+
+        public GroupCoordinatorServiceBuilder setTimer(Timer timer) {
+            this.timer = timer;
             return this;
         }
 

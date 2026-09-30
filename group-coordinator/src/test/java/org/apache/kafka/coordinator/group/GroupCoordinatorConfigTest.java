@@ -40,9 +40,11 @@ import java.util.Map;
 import java.util.OptionalInt;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class GroupCoordinatorConfigTest {
 
@@ -189,6 +191,9 @@ public class GroupCoordinatorConfigTest {
         configs.put(GroupCoordinatorConfig.GROUP_MAX_SESSION_TIMEOUT_MS_CONFIG, 10 * 60 * 1000);
         configs.put(GroupCoordinatorConfig.OFFSETS_RETENTION_CHECK_INTERVAL_MS_CONFIG, 600000);
         configs.put(GroupCoordinatorConfig.OFFSETS_RETENTION_MINUTES_CONFIG, 24 * 60 * 60 * 1000);
+        configs.put(GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_ENABLE_CONFIG, false);
+        configs.put(GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_CONFIG, 30000L);
+        configs.put(GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_CONFIG, 50);
         configs.put(GroupCoordinatorConfig.OFFSET_COMMIT_TIMEOUT_MS_CONFIG, 5000);
         configs.put(GroupCoordinatorConfig.CONSUMER_GROUP_MIGRATION_POLICY_CONFIG, ConsumerGroupMigrationPolicy.DISABLED.name());
         configs.put(GroupCoordinatorConfig.OFFSETS_TOPIC_COMPRESSION_CODEC_CONFIG, (int) CompressionType.GZIP.id);
@@ -229,6 +234,9 @@ public class GroupCoordinatorConfigTest {
         assertEquals(120, config.classicGroupMinSessionTimeoutMs());
         assertEquals(10 * 60 * 1000, config.classicGroupMaxSessionTimeoutMs());
         assertEquals(10 * 60 * 1000, config.offsetsRetentionCheckIntervalMs());
+        assertFalse(config.lagMetricsEnable());
+        assertEquals(30000L, config.lagMetricsIntervalMs());
+        assertEquals(50, config.lagMetricsMaxGroups());
         assertEquals(Duration.ofMinutes(24 * 60 * 60 * 1000L).toMillis(), config.offsetsRetentionMs());
         assertEquals(5000, config.offsetCommitTimeoutMs());
         assertEquals(CompressionType.GZIP, config.offsetTopicCompressionType());
@@ -646,6 +654,22 @@ public class GroupCoordinatorConfigTest {
         configs.putAll(additionalConfigs);
 
         return createConfig(configs);
+    }
+
+    @Test
+    public void testLagMetricsDefaultValues() {
+        GroupCoordinatorConfig config = createConfig(Map.of());
+        assertTrue(config.lagMetricsEnable());
+        assertEquals(60 * 1000L, config.lagMetricsIntervalMs());
+        assertEquals(1000, config.lagMetricsMaxGroups());
+    }
+
+    @Test
+    public void testInvalidLagMetricsConfigs() {
+        assertThrows(ConfigException.class, () ->
+            createConfig(Map.of(GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_INTERVAL_MS_CONFIG, 999L)));
+        assertThrows(ConfigException.class, () ->
+            createConfig(Map.of(GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_CONFIG, -1)));
     }
 
     @Test

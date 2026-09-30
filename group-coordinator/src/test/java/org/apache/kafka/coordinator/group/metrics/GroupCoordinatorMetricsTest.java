@@ -25,6 +25,7 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.MockTime;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
+import org.apache.kafka.coordinator.common.runtime.CoordinatorMetricsShard;
 import org.apache.kafka.coordinator.group.Group;
 import org.apache.kafka.coordinator.group.classic.ClassicGroupState;
 import org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroup.ConsumerGroupState;
@@ -150,7 +151,9 @@ public class GroupCoordinatorMetricsTest {
             metrics.metricName(
                 "streams-group-count",
                 GroupCoordinatorMetrics.METRICS_GROUP,
-                Map.of("state", StreamsGroupState.NOT_READY.toString()))
+                Map.of("state", StreamsGroupState.NOT_READY.toString())),
+            metrics.metricName("group-lag-max", GroupCoordinatorMetrics.METRICS_GROUP),
+            metrics.metricName("group-lag-sample-age-ms", GroupCoordinatorMetrics.METRICS_GROUP)
         );
 
         try {
@@ -170,6 +173,272 @@ public class GroupCoordinatorMetricsTest {
             }
             assertMetricsForTypeEqual(registry, "kafka.coordinator.group", Set.of());
             expectedMetrics.forEach(metricName -> assertFalse(metrics.metrics().containsKey(metricName)));
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    private static MetricName lagMetricName(Metrics metrics, String name, String groupId, Group.GroupType type) {
+        return metrics.metricName(name, METRICS_GROUP, Map.of("group", groupId, "protocol", type.toString()));
+    }
+
+    private static GroupLagValue lag(CoordinatorMetricsShard shard, Group.GroupType type, long sum, long max, int sampled) {
+        return new GroupLagValue(shard, type, sum, max, sampled, Math.max(sampled, 1));
+    }
+
+    private static GroupCoordinatorMetricsShard activeShard(GroupCoordinatorMetrics coordinatorMetrics, int partition) {
+        GroupCoordinatorMetricsShard shard = coordinatorMetrics.newMetricsShard(
+            new SnapshotRegistry(new LogContext()),
+            new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, partition)
+        );
+        coordinatorMetrics.activateMetricsShard(shard);
+        return shard;
+    }
+
+    @Test
+    public void testGroupLagGauges() {
+        MetricsRegistry registry = new MetricsRegistry();
+        MockTime time = new MockTime();
+        Metrics metrics = new Metrics(time);
+        MetricName groupLagMax = metrics.metricName("group-lag-max", METRICS_GROUP);
+        MetricName sampleAge = metrics.metricName("group-lag-sample-age-ms", METRICS_GROUP);
+        MetricName aSum = lagMetricName(metrics, "group-lag-sum", "a", Group.GroupType.CONSUMER);
+        MetricName aMax = lagMetricName(metrics, "group-lag-max", "a", Group.GroupType.CONSUMER);
+        MetricName bSum = lagMetricName(metrics, "group-lag-sum", "b", Group.GroupType.CLASSIC);
+        MetricName bMax = lagMetricName(metrics, "group-lag-max", "b", Group.GroupType.CLASSIC);
+
+        try {
+            GroupCoordinatorMetrics coordinatorMetrics = new GroupCoordinatorMetrics(registry, metrics);
+            GroupCoordinatorMetricsShard shard0 = activeShard(coordinatorMetrics, 0);
+            GroupCoordinatorMetricsShard shard1 = activeShard(coordinatorMetrics, 1);
+
+            // Nothing sampled yet.
+            assertGaugeValue(metrics, groupLagMax, 0L);
+            assertGaugeValue(metrics, sampleAge, GroupCoordinatorMetrics.GROUP_LAG_NOT_SAMPLED_YET);
+            assertFalse(metrics.metrics().containsKey(aSum));
+
+            // First sample registers per-group gauges.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 10L, 7L, 2),
+                "b", lag(shard1, Group.GroupType.CLASSIC, 30L, 20L, 1)
+            ), time.milliseconds());
+            assertEquals(2, coordinatorMetrics.registeredLagGroups());
+            assertGaugeValue(metrics, aSum, 10L);
+            assertGaugeValue(metrics, aMax, 7L);
+            assertGaugeValue(metrics, bSum, 30L);
+            assertGaugeValue(metrics, bMax, 20L);
+            assertGaugeValue(metrics, groupLagMax, 20L);
+            assertGaugeValue(metrics, sampleAge, 0L);
+            time.sleep(500L);
+            assertGaugeValue(metrics, sampleAge, 500L);
+
+            // A group that disappeared is removed; values of the others are refreshed.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 12L, 9L, 2)
+            ), time.milliseconds());
+            assertEquals(1, coordinatorMetrics.registeredLagGroups());
+            assertFalse(metrics.metrics().containsKey(bSum));
+            assertFalse(metrics.metrics().containsKey(bMax));
+            assertGaugeValue(metrics, aSum, 12L);
+            assertGaugeValue(metrics, aMax, 9L);
+            assertGaugeValue(metrics, groupLagMax, 9L);
+            assertGaugeValue(metrics, sampleAge, 0L);
+
+            // A group whose partitions could not be sampled keeps its previous value.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 0L, 0L, 0),
+                "c", lag(shard0, Group.GroupType.STREAMS, 0L, 0L, 0)
+            ), time.milliseconds());
+            assertEquals(1, coordinatorMetrics.registeredLagGroups());
+            assertGaugeValue(metrics, aSum, 12L);
+            assertGaugeValue(metrics, aMax, 9L);
+            assertGaugeValue(metrics, groupLagMax, 9L);
+            assertFalse(metrics.metrics().containsKey(lagMetricName(metrics, "group-lag-sum", "c", Group.GroupType.STREAMS)));
+
+            // Unloading the shard drops its groups right away.
+            coordinatorMetrics.deactivateMetricsShard(shard0);
+            assertEquals(0, coordinatorMetrics.registeredLagGroups());
+            assertFalse(metrics.metrics().containsKey(aSum));
+            assertFalse(metrics.metrics().containsKey(aMax));
+            assertGaugeValue(metrics, groupLagMax, 0L);
+
+            // Closing removes everything.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "b", lag(shard1, Group.GroupType.CLASSIC, 30L, 20L, 1)
+            ), time.milliseconds());
+            assertTrue(metrics.metrics().containsKey(bSum));
+            coordinatorMetrics.close();
+            assertFalse(metrics.metrics().containsKey(bSum));
+            assertFalse(metrics.metrics().containsKey(bMax));
+            assertFalse(metrics.metrics().containsKey(groupLagMax));
+            assertFalse(metrics.metrics().containsKey(sampleAge));
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    public void testGroupLagSampleAgeKeptWhenAllLookupsFail() {
+        MetricsRegistry registry = new MetricsRegistry();
+        MockTime time = new MockTime();
+        Metrics metrics = new Metrics(time);
+        MetricName sampleAge = metrics.metricName("group-lag-sample-age-ms", METRICS_GROUP);
+        MetricName aMax = lagMetricName(metrics, "group-lag-max", "a", Group.GroupType.CONSUMER);
+
+        try (GroupCoordinatorMetrics coordinatorMetrics = new GroupCoordinatorMetrics(registry, metrics)) {
+            GroupCoordinatorMetricsShard shard0 = activeShard(coordinatorMetrics, 0);
+
+            // Every lookup failing before the first successful cycle leaves the age unset.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 0L, 0L, 0)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, sampleAge, GroupCoordinatorMetrics.GROUP_LAG_NOT_SAMPLED_YET);
+
+            // A successful cycle sets the sample time.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 10L, 7L, 2),
+                "b", lag(shard0, Group.GroupType.CLASSIC, 3L, 3L, 1)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, sampleAge, 0L);
+
+            // Every lookup failing keeps the previous values and the previous sample time.
+            time.sleep(1000L);
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 0L, 0L, 0),
+                "b", lag(shard0, Group.GroupType.CLASSIC, 0L, 0L, 0)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, aMax, 7L);
+            assertGaugeValue(metrics, sampleAge, 1000L);
+
+            time.sleep(500L);
+            assertGaugeValue(metrics, sampleAge, 1500L);
+
+            // At least one resolved lookup counts as a successful cycle.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 0L, 0L, 0),
+                "b", lag(shard0, Group.GroupType.CLASSIC, 4L, 4L, 1)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, sampleAge, 0L);
+
+            // A cycle with nothing to look up is successful too.
+            time.sleep(200L);
+            coordinatorMetrics.updateGroupLag(Map.of(), time.milliseconds());
+            assertGaugeValue(metrics, sampleAge, 0L);
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    public void testGroupLagGaugesCap() {
+        MetricsRegistry registry = new MetricsRegistry();
+        MockTime time = new MockTime();
+        Metrics metrics = new Metrics(time);
+        MetricName groupLagMax = metrics.metricName("group-lag-max", METRICS_GROUP);
+
+        try (GroupCoordinatorMetrics coordinatorMetrics = new GroupCoordinatorMetrics(registry, metrics, 2)) {
+            GroupCoordinatorMetricsShard shard0 = activeShard(coordinatorMetrics, 0);
+
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 1L, 1L, 1),
+                "b", lag(shard0, Group.GroupType.CONSUMER, 2L, 2L, 1),
+                "c", lag(shard0, Group.GroupType.CONSUMER, 3L, 3L, 1)
+            ), time.milliseconds());
+
+            // Only two groups have per-group gauges, but the aggregate covers all of them.
+            assertEquals(2, coordinatorMetrics.registeredLagGroups());
+            assertTrue(metrics.metrics().containsKey(lagMetricName(metrics, "group-lag-sum", "a", Group.GroupType.CONSUMER)));
+            assertTrue(metrics.metrics().containsKey(lagMetricName(metrics, "group-lag-sum", "b", Group.GroupType.CONSUMER)));
+            assertFalse(metrics.metrics().containsKey(lagMetricName(metrics, "group-lag-sum", "c", Group.GroupType.CONSUMER)));
+            assertGaugeValue(metrics, groupLagMax, 3L);
+
+            // Removing a registered group frees a slot for the next one.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "b", lag(shard0, Group.GroupType.CONSUMER, 2L, 2L, 1),
+                "c", lag(shard0, Group.GroupType.CONSUMER, 3L, 3L, 1)
+            ), time.milliseconds());
+            assertEquals(2, coordinatorMetrics.registeredLagGroups());
+            assertFalse(metrics.metrics().containsKey(lagMetricName(metrics, "group-lag-sum", "a", Group.GroupType.CONSUMER)));
+            assertTrue(metrics.metrics().containsKey(lagMetricName(metrics, "group-lag-sum", "c", Group.GroupType.CONSUMER)));
+            assertGaugeValue(metrics, lagMetricName(metrics, "group-lag-max", "c", Group.GroupType.CONSUMER), 3L);
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    public void testGroupLagGaugesDisabledWithZeroCap() {
+        MetricsRegistry registry = new MetricsRegistry();
+        Metrics metrics = new Metrics();
+
+        try (GroupCoordinatorMetrics coordinatorMetrics = new GroupCoordinatorMetrics(registry, metrics, 0)) {
+            GroupCoordinatorMetricsShard shard0 = activeShard(coordinatorMetrics, 0);
+
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 5L, 5L, 1)
+            ), 0L);
+            assertEquals(0, coordinatorMetrics.registeredLagGroups());
+            assertFalse(metrics.metrics().containsKey(lagMetricName(metrics, "group-lag-sum", "a", Group.GroupType.CONSUMER)));
+            assertGaugeValue(metrics, metrics.metricName("group-lag-max", METRICS_GROUP), 5L);
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
+    public void testGroupLagDiscardsResultsOfUnloadedOrReloadedShards() {
+        MetricsRegistry registry = new MetricsRegistry();
+        MockTime time = new MockTime();
+        Metrics metrics = new Metrics(time);
+        MetricName groupLagMax = metrics.metricName("group-lag-max", METRICS_GROUP);
+        MetricName sampleAge = metrics.metricName("group-lag-sample-age-ms", METRICS_GROUP);
+        MetricName aSum = lagMetricName(metrics, "group-lag-sum", "a", Group.GroupType.CONSUMER);
+        MetricName bSum = lagMetricName(metrics, "group-lag-sum", "b", Group.GroupType.CLASSIC);
+
+        try (GroupCoordinatorMetrics coordinatorMetrics = new GroupCoordinatorMetrics(registry, metrics)) {
+            GroupCoordinatorMetricsShard shard0 = activeShard(coordinatorMetrics, 0);
+            GroupCoordinatorMetricsShard shard1 = activeShard(coordinatorMetrics, 1);
+
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 10L, 10L, 1),
+                "b", lag(shard1, Group.GroupType.CLASSIC, 3L, 3L, 1)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, aSum, 10L);
+            assertGaugeValue(metrics, bSum, 3L);
+
+            // shard0 unloads while a cycle that read it is still waiting for ListOffsets.
+            coordinatorMetrics.deactivateMetricsShard(shard0);
+            assertFalse(metrics.metrics().containsKey(aSum));
+
+            // The late result of shard0 is discarded; the result of shard1 still applies.
+            time.sleep(100L);
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 50L, 50L, 1),
+                "b", lag(shard1, Group.GroupType.CLASSIC, 4L, 4L, 1)
+            ), time.milliseconds());
+            assertFalse(metrics.metrics().containsKey(aSum));
+            assertGaugeValue(metrics, bSum, 4L);
+            assertGaugeValue(metrics, groupLagMax, 4L);
+            assertGaugeValue(metrics, sampleAge, 0L);
+            assertEquals(1, coordinatorMetrics.registeredLagGroups());
+
+            // The partition is loaded again. A late result of the previous load is still discarded.
+            GroupCoordinatorMetricsShard reloadedShard0 = activeShard(coordinatorMetrics, 0);
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(shard0, Group.GroupType.CONSUMER, 50L, 50L, 1),
+                "b", lag(shard1, Group.GroupType.CLASSIC, 4L, 4L, 1)
+            ), time.milliseconds());
+            assertFalse(metrics.metrics().containsKey(aSum));
+            assertGaugeValue(metrics, groupLagMax, 4L);
+
+            // A result read from the new load applies.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(reloadedShard0, Group.GroupType.CONSUMER, 20L, 20L, 1),
+                "b", lag(shard1, Group.GroupType.CLASSIC, 4L, 4L, 1)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, aSum, 20L);
+            assertGaugeValue(metrics, groupLagMax, 20L);
+            assertEquals(2, coordinatorMetrics.registeredLagGroups());
         } finally {
             registry.shutdown();
         }

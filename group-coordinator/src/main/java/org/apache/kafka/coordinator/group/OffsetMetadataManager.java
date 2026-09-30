@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.coordinator.group;
 
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.ApiException;
 import org.apache.kafka.common.errors.GroupIdNotFoundException;
@@ -57,7 +58,9 @@ import org.apache.kafka.timeline.TimelineHashSet;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -1043,6 +1046,55 @@ public class OffsetMetadataManager {
         return new OffsetFetchResponseData.OffsetFetchResponseGroup()
             .setGroupId(request.groupId())
             .setTopics(topicResponses);
+    }
+
+    /**
+     * Snapshots the committed offsets of every group at the given committed offset.
+     * Pending transactional offsets are not included; only offsets whose transaction
+     * has been committed are visible.
+     * Offsets whose stored topic id differs from the topic's current id in the metadata
+     * image are skipped. They belong to a previous incarnation of a deleted and recreated
+     * topic, so subtracting them from the new topic's end offset would give a wrong lag.
+     * Offsets stored without a topic id, and topics missing from the metadata image, cannot
+     * be checked and are kept, like in {@link #fetchOffsets}.
+     *
+     * @param committedOffset   The committed offset to read the timeline at.
+     *
+     * @return A map of group id to the committed offset of each of its topic partitions.
+     *         Groups without any valid committed offset are not present.
+     */
+    public Map<String, Map<TopicPartition, Long>> committedOffsetsSnapshot(long committedOffset) {
+        final Map<String, Map<TopicPartition, Long>> snapshot = new HashMap<>();
+        // Resolve each topic's current id once per snapshot rather than once per group.
+        final Map<String, Uuid> currentTopicIds = new HashMap<>();
+
+        offsets.offsetsByGroup.entrySet(committedOffset).forEach(groupEntry -> {
+            final Map<TopicPartition, Long> groupOffsets = new HashMap<>();
+
+            groupEntry.getValue().entrySet(committedOffset).forEach(topicEntry -> {
+                final String topic = topicEntry.getKey();
+                final Uuid currentTopicId = currentTopicIds.computeIfAbsent(topic, name -> metadataImage
+                    .topicMetadata(name)
+                    .map(CoordinatorMetadataImage.TopicMetadata::id)
+                    .orElse(Uuid.ZERO_UUID));
+
+                topicEntry.getValue().entrySet(committedOffset).forEach(partitionEntry -> {
+                    final OffsetAndMetadata offsetAndMetadata = partitionEntry.getValue();
+                    if (!isMismatchedTopicId(offsetAndMetadata.topicId, currentTopicId)) {
+                        groupOffsets.put(
+                            new TopicPartition(topic, partitionEntry.getKey()),
+                            offsetAndMetadata.committedOffset
+                        );
+                    }
+                });
+            });
+
+            if (!groupOffsets.isEmpty()) {
+                snapshot.put(groupEntry.getKey(), groupOffsets);
+            }
+        });
+
+        return snapshot;
     }
 
     /**

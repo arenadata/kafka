@@ -26,6 +26,7 @@ import org.apache.kafka.common.utils.Utils;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorMetrics;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorMetricsShard;
 import org.apache.kafka.coordinator.group.Group;
+import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 import org.apache.kafka.coordinator.group.classic.ClassicGroupState;
 import org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroup.ConsumerGroupState;
 import org.apache.kafka.coordinator.group.modern.share.ShareGroup;
@@ -35,8 +36,15 @@ import org.apache.kafka.timeline.SnapshotRegistry;
 
 import com.yammer.metrics.core.MetricsRegistry;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
@@ -77,6 +85,20 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
     public static final String STREAMS_GROUP_COUNT_METRIC_NAME = "streams-group-count";
     public static final String STREAMS_GROUP_COUNT_STATE_TAG = "state";
 
+    public static final String GROUP_LAG_MAX_METRIC_NAME = "group-lag-max";
+    public static final String GROUP_LAG_SUM_METRIC_NAME = "group-lag-sum";
+    public static final String GROUP_LAG_SAMPLE_AGE_MS_METRIC_NAME = "group-lag-sample-age-ms";
+    public static final String GROUP_LAG_GROUP_TAG = "group";
+    public static final String GROUP_LAG_PROTOCOL_TAG = GROUP_COUNT_PROTOCOL_TAG;
+
+    /**
+     * The value of the {@link #GROUP_LAG_SAMPLE_AGE_MS_METRIC_NAME} metric before
+     * the first successful sampling cycle.
+     */
+    public static final long GROUP_LAG_NOT_SAMPLED_YET = -1L;
+
+    private static final Logger LOG = LoggerFactory.getLogger(GroupCoordinatorMetrics.class);
+
     public static final String OFFSET_COMMITS_SENSOR_NAME = "OffsetCommits";
     public static final String OFFSET_EXPIRED_SENSOR_NAME = "OffsetExpired";
     public static final String OFFSET_DELETIONS_SENSOR_NAME = "OffsetDeletions";
@@ -103,10 +125,47 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
     private final MetricName streamsGroupCountStableMetricName;
     private final MetricName streamsGroupCountDeadMetricName;
     private final MetricName streamsGroupCountNotReadyMetricName;
+    private final MetricName groupLagMaxMetricName;
+    private final MetricName groupLagSampleAgeMsMetricName;
 
     private final MetricsRegistry registry;
     private final Metrics metrics;
     private final Map<TopicPartition, GroupCoordinatorMetricsShard> shards = new ConcurrentHashMap<>();
+
+    /**
+     * The maximum number of groups with per-group lag gauges.
+     */
+    private final int maxLagGroups;
+
+    /**
+     * The lag of every sampled group. Mutated only while holding {@link #lagLock};
+     * gauges read the immutable {@link GroupLagValue} held by each entry.
+     */
+    private final Map<String, GroupLagEntry> lagByGroup = new ConcurrentHashMap<>();
+    private final Object lagLock = new Object();
+    // Guarded by lagLock.
+    private int registeredLagGroups = 0;
+    private volatile long groupLagMax = 0L;
+    private volatile long lastLagSampleTimeMs = GROUP_LAG_NOT_SAMPLED_YET;
+    private volatile boolean maxLagGroupsWarned = false;
+
+    /**
+     * The per-group lag state. The metric names are null while the group has no
+     * per-group gauges because of {@link #maxLagGroups}.
+     */
+    private static final class GroupLagEntry {
+        volatile GroupLagValue value;
+        MetricName sumMetricName;
+        MetricName maxMetricName;
+
+        GroupLagEntry(GroupLagValue value) {
+            this.value = value;
+        }
+
+        boolean registered() {
+            return sumMetricName != null;
+        }
+    }
 
     /**
      * Global sensors. These are shared across all metrics shards.
@@ -117,10 +176,35 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
         this(KafkaYammerMetrics.defaultRegistry(), new Metrics());
     }
 
-    @SuppressWarnings("MethodLength")
     public GroupCoordinatorMetrics(MetricsRegistry registry, Metrics metrics) {
+        this(registry, metrics, GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_DEFAULT);
+    }
+
+    /**
+     * @param registry      The yammer metrics registry.
+     * @param metrics       The Kafka metrics.
+     * @param maxLagGroups  The maximum number of groups with per-group lag gauges.
+     */
+    @SuppressWarnings("MethodLength")
+    public GroupCoordinatorMetrics(MetricsRegistry registry, Metrics metrics, int maxLagGroups) {
         this.registry = Objects.requireNonNull(registry);
         this.metrics = Objects.requireNonNull(metrics);
+        if (maxLagGroups < 0) {
+            throw new IllegalArgumentException("maxLagGroups must not be negative.");
+        }
+        this.maxLagGroups = maxLagGroups;
+
+        groupLagMaxMetricName = metrics.metricName(
+            GROUP_LAG_MAX_METRIC_NAME,
+            METRICS_GROUP,
+            "The maximum partition lag across all classic, consumer and streams groups hosted by this coordinator."
+        );
+
+        groupLagSampleAgeMsMetricName = metrics.metricName(
+            GROUP_LAG_SAMPLE_AGE_MS_METRIC_NAME,
+            METRICS_GROUP,
+            "The number of milliseconds since the last successful group lag sampling cycle, or -1 if none completed yet."
+        );
 
         classicGroupCountMetricName = metrics.metricName(
             GROUP_COUNT_METRIC_NAME,
@@ -390,8 +474,17 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
             streamsGroupCountReconcilingMetricName,
             streamsGroupCountStableMetricName,
             streamsGroupCountDeadMetricName,
-            streamsGroupCountNotReadyMetricName
+            streamsGroupCountNotReadyMetricName,
+            groupLagMaxMetricName,
+            groupLagSampleAgeMsMetricName
         ).forEach(metrics::removeMetric);
+
+        synchronized (lagLock) {
+            lagByGroup.values().forEach(this::unregisterGroupLagGauges);
+            lagByGroup.clear();
+            registeredLagGroups = 0;
+            groupLagMax = 0L;
+        }
 
         Arrays.asList(
             OFFSET_COMMITS_SENSOR_NAME,
@@ -420,6 +513,205 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
     @Override
     public void deactivateMetricsShard(CoordinatorMetricsShard shard) {
         shards.remove(shard.topicPartition());
+        removeGroupLag(shard.topicPartition());
+    }
+
+    /**
+     * Updates the group lag gauges with the result of a sampling cycle.
+     *
+     * Groups absent from {@code sampledLag} are removed. Groups present but with no
+     * sampled partition keep their previous value, if any, so that a transient
+     * ListOffsets failure does not zero the gauges.
+     *
+     * The sample time only advances when the cycle resolved at least one log end
+     * offset, or had none to resolve. When every lookup failed, the gauges still hold
+     * the previous cycle's values, so the sample age keeps growing to show that they
+     * are stale.
+     *
+     * Values computed from a coordinator shard that was unloaded, or unloaded and loaded
+     * again, since the cycle read it are discarded, so that a cycle still waiting for
+     * ListOffsets does not bring back the gauges that {@link #deactivateMetricsShard}
+     * removed.
+     *
+     * @param sampledLag    The lag of every sampled group keyed by group id.
+     * @param sampleTimeMs  The time at which the cycle completed.
+     */
+    public void updateGroupLag(Map<String, GroupLagValue> sampledLag, long sampleTimeMs) {
+        synchronized (lagLock) {
+            final Map<String, GroupLagValue> activeLag = discardInactiveShards(sampledLag);
+
+            // Drop the groups that are gone.
+            Iterator<Map.Entry<String, GroupLagEntry>> iterator = lagByGroup.entrySet().iterator();
+            while (iterator.hasNext()) {
+                Map.Entry<String, GroupLagEntry> entry = iterator.next();
+                if (!activeLag.containsKey(entry.getKey())) {
+                    unregisterGroupLagGauges(entry.getValue());
+                    iterator.remove();
+                }
+            }
+
+            // Upsert the sampled groups.
+            activeLag.forEach((groupId, value) -> {
+                GroupLagEntry entry = lagByGroup.get(groupId);
+                if (value.sampledPartitions() == 0) {
+                    // Keep the previous value, if any.
+                    if (entry != null) {
+                        entry.value = new GroupLagValue(
+                            value.shard(),
+                            value.type(),
+                            entry.value.sumLag(),
+                            entry.value.maxLag(),
+                            0,
+                            value.totalPartitions()
+                        );
+                    }
+                } else if (entry == null) {
+                    lagByGroup.put(groupId, new GroupLagEntry(value));
+                } else {
+                    entry.value = value;
+                }
+            });
+
+            registerGroupLagGaugesUpToCap();
+            groupLagMax = computeGroupLagMax();
+
+            if (isSuccessfulSample(activeLag)) {
+                lastLagSampleTimeMs = sampleTimeMs;
+            }
+        }
+    }
+
+    /**
+     * Keeps only the values computed from a metrics shard that is still the active one of
+     * its partition. Each load of a partition creates a new metrics shard, so a value from
+     * an unloaded or reloaded shard carries an instance that is no longer in {@link #shards}.
+     *
+     * Must be called while holding {@link #lagLock}. {@link #deactivateMetricsShard} removes
+     * the shard from {@link #shards} before it takes the lock to remove the shard's gauges,
+     * so either this check sees the shard gone, or the removal runs after this update.
+     */
+    private Map<String, GroupLagValue> discardInactiveShards(Map<String, GroupLagValue> sampledLag) {
+        Map<String, GroupLagValue> active = new HashMap<>(sampledLag.size());
+        sampledLag.forEach((groupId, value) -> {
+            if (shards.get(value.shard().topicPartition()) == value.shard()) {
+                active.put(groupId, value);
+            }
+        });
+        if (active.size() < sampledLag.size()) {
+            LOG.debug("Discarded the lag of {} groups hosted by coordinator shards that were unloaded " +
+                "or reloaded during the sampling cycle.", sampledLag.size() - active.size());
+        }
+        return active;
+    }
+
+    /**
+     * @return True if the cycle resolved at least one log end offset, or had none to
+     *         resolve. False when every lookup failed.
+     */
+    private static boolean isSuccessfulSample(Map<String, GroupLagValue> sampledLag) {
+        boolean hadLookups = false;
+        for (GroupLagValue value : sampledLag.values()) {
+            if (value.sampledPartitions() > 0) {
+                return true;
+            }
+            hadLookups |= value.totalPartitions() > 0;
+        }
+        return !hadLookups;
+    }
+
+    /**
+     * Registers gauges for the groups without any, in group id order, up to
+     * {@link #maxLagGroups}. Logs a warning the first time a group is left out.
+     * Must be called while holding {@link #lagLock}.
+     */
+    private void registerGroupLagGaugesUpToCap() {
+        if (registeredLagGroups < maxLagGroups) {
+            List<String> unregistered = new ArrayList<>();
+            lagByGroup.forEach((groupId, entry) -> {
+                if (!entry.registered()) unregistered.add(groupId);
+            });
+            unregistered.sort(null);
+            for (String groupId : unregistered) {
+                if (registeredLagGroups >= maxLagGroups) break;
+                registerGroupLagGauges(groupId, lagByGroup.get(groupId));
+            }
+        }
+
+        if (lagByGroup.size() > registeredLagGroups && !maxLagGroupsWarned) {
+            LOG.warn("The number of groups with per-group lag metrics reached {} ({}). Per-group lag metrics " +
+                "are not exposed for the remaining groups; they only contribute to the {} metric.",
+                maxLagGroups,
+                GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_CONFIG,
+                GROUP_LAG_MAX_METRIC_NAME);
+            maxLagGroupsWarned = true;
+        }
+    }
+
+    /**
+     * Removes the lag of the groups hosted by the given shard. Called when the
+     * shard is unloaded so that the gauges do not survive until the next cycle.
+     */
+    private void removeGroupLag(TopicPartition shard) {
+        synchronized (lagLock) {
+            boolean removed = false;
+            Iterator<Map.Entry<String, GroupLagEntry>> iterator = lagByGroup.entrySet().iterator();
+            while (iterator.hasNext()) {
+                GroupLagEntry entry = iterator.next().getValue();
+                if (shard.equals(entry.value.shard().topicPartition())) {
+                    unregisterGroupLagGauges(entry);
+                    iterator.remove();
+                    removed = true;
+                }
+            }
+            if (removed) {
+                groupLagMax = computeGroupLagMax();
+            }
+        }
+    }
+
+    private long computeGroupLagMax() {
+        return lagByGroup.values().stream().mapToLong(entry -> entry.value.maxLag()).max().orElse(0L);
+    }
+
+    private void registerGroupLagGauges(String groupId, GroupLagEntry entry) {
+        Map<String, String> tags = Map.of(
+            GROUP_LAG_GROUP_TAG, groupId,
+            GROUP_LAG_PROTOCOL_TAG, entry.value.type().toString()
+        );
+        entry.sumMetricName = metrics.metricName(
+            GROUP_LAG_SUM_METRIC_NAME,
+            METRICS_GROUP,
+            "The sum of the partition lags of the group.",
+            tags
+        );
+        entry.maxMetricName = metrics.metricName(
+            GROUP_LAG_MAX_METRIC_NAME,
+            METRICS_GROUP,
+            "The maximum partition lag of the group.",
+            tags
+        );
+        metrics.addMetric(entry.sumMetricName, (Gauge<Long>) (config, now) -> entry.value.sumLag());
+        metrics.addMetric(entry.maxMetricName, (Gauge<Long>) (config, now) -> entry.value.maxLag());
+        registeredLagGroups++;
+    }
+
+    private void unregisterGroupLagGauges(GroupLagEntry entry) {
+        if (entry.registered()) {
+            metrics.removeMetric(entry.sumMetricName);
+            metrics.removeMetric(entry.maxMetricName);
+            entry.sumMetricName = null;
+            entry.maxMetricName = null;
+            registeredLagGroups--;
+        }
+    }
+
+    /**
+     * @return The number of groups with per-group lag gauges. Visible for testing.
+     */
+    public int registeredLagGroups() {
+        synchronized (lagLock) {
+            return registeredLagGroups;
+        }
     }
 
     @Override
@@ -572,6 +864,19 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
         metrics.addMetric(
             streamsGroupCountNotReadyMetricName,
             (Gauge<Long>) (config, now) -> numStreamsGroups(StreamsGroupState.NOT_READY)
+        );
+
+        metrics.addMetric(
+            groupLagMaxMetricName,
+            (Gauge<Long>) (config, now) -> groupLagMax
+        );
+
+        metrics.addMetric(
+            groupLagSampleAgeMsMetricName,
+            (Gauge<Long>) (config, now) -> {
+                long sampleTimeMs = lastLagSampleTimeMs;
+                return sampleTimeMs == GROUP_LAG_NOT_SAMPLED_YET ? GROUP_LAG_NOT_SAMPLED_YET : Math.max(0L, now - sampleTimeMs);
+            }
         );
     }
 }

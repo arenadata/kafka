@@ -16,6 +16,7 @@
  */
 package org.apache.kafka.coordinator.group;
 
+import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.GroupIdNotFoundException;
 import org.apache.kafka.common.errors.GroupNotEmptyException;
@@ -87,6 +88,7 @@ import org.apache.kafka.coordinator.group.generated.StreamsGroupTargetAssignment
 import org.apache.kafka.coordinator.group.generated.StreamsGroupTargetAssignmentMetadataValue;
 import org.apache.kafka.coordinator.group.generated.StreamsGroupTopologyKey;
 import org.apache.kafka.coordinator.group.generated.StreamsGroupTopologyValue;
+import org.apache.kafka.coordinator.group.metrics.GroupLagInputs;
 import org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroup;
 import org.apache.kafka.coordinator.group.modern.share.ShareGroup;
 import org.apache.kafka.coordinator.group.streams.StreamsGroupHeartbeatResult;
@@ -121,6 +123,7 @@ import static org.apache.kafka.coordinator.group.GroupCoordinatorShard.GROUP_SIZ
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -137,6 +140,71 @@ import static org.mockito.Mockito.when;
 
 @SuppressWarnings("ClassFanOutComplexity")
 public class GroupCoordinatorShardTest {
+
+    @Test
+    public void testCollectGroupLagInputs() {
+        GroupMetadataManager groupMetadataManager = mock(GroupMetadataManager.class);
+        OffsetMetadataManager offsetMetadataManager = mock(OffsetMetadataManager.class);
+        CoordinatorMetrics coordinatorMetrics = mock(CoordinatorMetrics.class);
+        CoordinatorMetricsShard metricsShard = mock(CoordinatorMetricsShard.class);
+        GroupCoordinatorShard coordinator = new GroupCoordinatorShard(
+            new LogContext(),
+            groupMetadataManager,
+            offsetMetadataManager,
+            Time.SYSTEM,
+            new MockCoordinatorTimer<>(Time.SYSTEM),
+            mock(GroupCoordinatorConfig.class),
+            coordinatorMetrics,
+            metricsShard
+        );
+
+        TopicPartition foo0 = new TopicPartition("foo", 0);
+        TopicPartition foo1 = new TopicPartition("foo", 1);
+        TopicPartition bar0 = new TopicPartition("bar", 0);
+        long committedOffset = 100L;
+
+        when(offsetMetadataManager.committedOffsetsSnapshot(committedOffset)).thenReturn(Map.of(
+            "consumer-group", Map.of(foo0, 10L, foo1, 20L),
+            "classic-group", Map.of(bar0, 30L),
+            "streams-group", Map.of(bar0, 40L),
+            "share-group", Map.of(foo0, 50L),
+            "dead-group", Map.of(foo0, 60L),
+            "unknown-group", Map.of(foo0, 70L)
+        ));
+
+        Group consumerGroup = mockGroup(Group.GroupType.CONSUMER, false, committedOffset);
+        Group classicGroup = mockGroup(Group.GroupType.CLASSIC, false, committedOffset);
+        Group streamsGroup = mockGroup(Group.GroupType.STREAMS, false, committedOffset);
+        Group shareGroup = mockGroup(Group.GroupType.SHARE, false, committedOffset);
+        Group deadGroup = mockGroup(Group.GroupType.CONSUMER, true, committedOffset);
+
+        when(groupMetadataManager.group("consumer-group", committedOffset)).thenReturn(consumerGroup);
+        when(groupMetadataManager.group("classic-group", committedOffset)).thenReturn(classicGroup);
+        when(groupMetadataManager.group("streams-group", committedOffset)).thenReturn(streamsGroup);
+        when(groupMetadataManager.group("share-group", committedOffset)).thenReturn(shareGroup);
+        when(groupMetadataManager.group("dead-group", committedOffset)).thenReturn(deadGroup);
+        when(groupMetadataManager.group("unknown-group", committedOffset))
+            .thenThrow(new GroupIdNotFoundException("Group unknown-group not found."));
+
+        GroupLagInputs inputs = coordinator.collectGroupLagInputs(committedOffset);
+
+        assertSame(metricsShard, inputs.shard());
+        assertEquals(
+            Map.of(
+                "consumer-group", new GroupLagInputs.GroupLagInput(Group.GroupType.CONSUMER, Map.of(foo0, 10L, foo1, 20L)),
+                "classic-group", new GroupLagInputs.GroupLagInput(Group.GroupType.CLASSIC, Map.of(bar0, 30L)),
+                "streams-group", new GroupLagInputs.GroupLagInput(Group.GroupType.STREAMS, Map.of(bar0, 40L))
+            ),
+            inputs.groups()
+        );
+    }
+
+    private static Group mockGroup(Group.GroupType type, boolean dead, long committedOffset) {
+        Group group = mock(Group.class);
+        when(group.type()).thenReturn(type);
+        when(group.isInStates(Set.of("dead"), committedOffset)).thenReturn(dead);
+        return group;
+    }
 
     @Test
     public void testConsumerGroupHeartbeat() {

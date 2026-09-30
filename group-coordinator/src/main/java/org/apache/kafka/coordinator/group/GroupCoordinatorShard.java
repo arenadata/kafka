@@ -118,6 +118,7 @@ import org.apache.kafka.coordinator.group.generated.StreamsGroupTopologyKey;
 import org.apache.kafka.coordinator.group.generated.StreamsGroupTopologyValue;
 import org.apache.kafka.coordinator.group.metrics.GroupCoordinatorMetrics;
 import org.apache.kafka.coordinator.group.metrics.GroupCoordinatorMetricsShard;
+import org.apache.kafka.coordinator.group.metrics.GroupLagInputs;
 import org.apache.kafka.coordinator.group.modern.share.ShareGroup;
 import org.apache.kafka.coordinator.group.streams.StreamsGroupHeartbeatResult;
 import org.apache.kafka.server.authorizer.AuthorizableRequestContext;
@@ -426,6 +427,11 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
      * The coordinator metrics shard.
      */
     private final CoordinatorMetricsShard metricsShard;
+
+    /**
+     * The state filter used to exclude dead groups from lag sampling.
+     */
+    private static final Set<String> DEAD_GROUP_STATE_FILTER = Set.of("dead");
 
     /**
      * Constructor.
@@ -923,6 +929,37 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
         long committedOffset
     ) {
         return groupMetadataManager.shareGroupDescribe(groupIds, committedOffset);
+    }
+
+    /**
+     * Collects the inputs required to compute the lag of the groups hosted by this
+     * shard at the given committed offset. Share groups are excluded because their
+     * lag is defined differently (see KIP-1226), and dead groups are excluded because
+     * they are about to be removed.
+     *
+     * @param committedOffset   A specified committed offset corresponding to this shard.
+     *
+     * @return The group lag inputs of this shard.
+     */
+    public GroupLagInputs collectGroupLagInputs(long committedOffset) {
+        final Map<String, GroupLagInputs.GroupLagInput> groups = new HashMap<>();
+
+        offsetMetadataManager.committedOffsetsSnapshot(committedOffset).forEach((groupId, committedOffsets) -> {
+            final Group group;
+            try {
+                group = groupMetadataManager.group(groupId, committedOffset);
+            } catch (GroupIdNotFoundException ex) {
+                return;
+            }
+
+            if (group.type() == Group.GroupType.SHARE || group.isInStates(DEAD_GROUP_STATE_FILTER, committedOffset)) {
+                return;
+            }
+
+            groups.put(groupId, new GroupLagInputs.GroupLagInput(group.type(), committedOffsets));
+        });
+
+        return new GroupLagInputs(metricsShard, groups);
     }
 
     /**

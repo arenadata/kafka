@@ -520,8 +520,12 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
      *
      * Groups absent from {@code lagByGroup} are removed. Groups present but with no
      * sampled partition keep their previous value, if any, so that a transient
-     * ListOffsets failure does not zero the gauges; the sample age metric is what
-     * tells the operator that the values may be stale.
+     * ListOffsets failure does not zero the gauges.
+     *
+     * The sample time only advances when the cycle resolved at least one log end
+     * offset, or had none to resolve. When every lookup failed, the gauges still hold
+     * the previous cycle's values, so the sample age keeps growing to show that they
+     * are stale.
      *
      * @param sampledLag    The lag of every sampled group keyed by group id.
      * @param sampleTimeMs  The time at which the cycle completed.
@@ -560,30 +564,55 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
                 }
             });
 
-            // Register gauges for the groups without any, up to the cap.
-            if (registeredLagGroups < maxLagGroups) {
-                List<String> unregistered = new ArrayList<>();
-                lagByGroup.forEach((groupId, entry) -> {
-                    if (!entry.registered()) unregistered.add(groupId);
-                });
-                unregistered.sort(null);
-                for (String groupId : unregistered) {
-                    if (registeredLagGroups >= maxLagGroups) break;
-                    registerGroupLagGauges(groupId, lagByGroup.get(groupId));
-                }
-            }
-
-            if (lagByGroup.size() > registeredLagGroups && !maxLagGroupsWarned) {
-                LOG.warn("The number of groups with per-group lag metrics reached {} ({}). Per-group lag metrics " +
-                    "are not exposed for the remaining groups; they only contribute to the {} metric.",
-                    maxLagGroups,
-                    GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_CONFIG,
-                    GROUP_LAG_MAX_METRIC_NAME);
-                maxLagGroupsWarned = true;
-            }
-
+            registerGroupLagGaugesUpToCap();
             groupLagMax = computeGroupLagMax();
-            lastLagSampleTimeMs = sampleTimeMs;
+
+            if (isSuccessfulSample(sampledLag)) {
+                lastLagSampleTimeMs = sampleTimeMs;
+            }
+        }
+    }
+
+    /**
+     * @return True if the cycle resolved at least one log end offset, or had none to
+     *         resolve. False when every lookup failed.
+     */
+    private static boolean isSuccessfulSample(Map<String, GroupLagValue> sampledLag) {
+        boolean hadLookups = false;
+        for (GroupLagValue value : sampledLag.values()) {
+            if (value.sampledPartitions() > 0) {
+                return true;
+            }
+            hadLookups |= value.totalPartitions() > 0;
+        }
+        return !hadLookups;
+    }
+
+    /**
+     * Registers gauges for the groups without any, in group id order, up to
+     * {@link #maxLagGroups}. Logs a warning the first time a group is left out.
+     * Must be called while holding {@link #lagLock}.
+     */
+    private void registerGroupLagGaugesUpToCap() {
+        if (registeredLagGroups < maxLagGroups) {
+            List<String> unregistered = new ArrayList<>();
+            lagByGroup.forEach((groupId, entry) -> {
+                if (!entry.registered()) unregistered.add(groupId);
+            });
+            unregistered.sort(null);
+            for (String groupId : unregistered) {
+                if (registeredLagGroups >= maxLagGroups) break;
+                registerGroupLagGauges(groupId, lagByGroup.get(groupId));
+            }
+        }
+
+        if (lagByGroup.size() > registeredLagGroups && !maxLagGroupsWarned) {
+            LOG.warn("The number of groups with per-group lag metrics reached {} ({}). Per-group lag metrics " +
+                "are not exposed for the remaining groups; they only contribute to the {} metric.",
+                maxLagGroups,
+                GroupCoordinatorConfig.GROUP_COORDINATOR_LAG_METRICS_MAX_GROUPS_CONFIG,
+                GROUP_LAG_MAX_METRIC_NAME);
+            maxLagGroupsWarned = true;
         }
     }
 

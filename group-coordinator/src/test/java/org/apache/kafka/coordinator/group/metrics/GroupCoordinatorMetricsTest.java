@@ -271,6 +271,57 @@ public class GroupCoordinatorMetricsTest {
     }
 
     @Test
+    public void testGroupLagSampleAgeKeptWhenAllLookupsFail() {
+        MetricsRegistry registry = new MetricsRegistry();
+        MockTime time = new MockTime();
+        Metrics metrics = new Metrics(time);
+        TopicPartition tp0 = new TopicPartition(Topic.GROUP_METADATA_TOPIC_NAME, 0);
+        MetricName sampleAge = metrics.metricName("group-lag-sample-age-ms", METRICS_GROUP);
+        MetricName aMax = lagMetricName(metrics, "group-lag-max", "a", Group.GroupType.CONSUMER);
+
+        try (GroupCoordinatorMetrics coordinatorMetrics = new GroupCoordinatorMetrics(registry, metrics)) {
+            // Every lookup failing before the first successful cycle leaves the age unset.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(tp0, Group.GroupType.CONSUMER, 0L, 0L, 0)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, sampleAge, GroupCoordinatorMetrics.GROUP_LAG_NOT_SAMPLED_YET);
+
+            // A successful cycle sets the sample time.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(tp0, Group.GroupType.CONSUMER, 10L, 7L, 2),
+                "b", lag(tp0, Group.GroupType.CLASSIC, 3L, 3L, 1)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, sampleAge, 0L);
+
+            // Every lookup failing keeps the previous values and the previous sample time.
+            time.sleep(1000L);
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(tp0, Group.GroupType.CONSUMER, 0L, 0L, 0),
+                "b", lag(tp0, Group.GroupType.CLASSIC, 0L, 0L, 0)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, aMax, 7L);
+            assertGaugeValue(metrics, sampleAge, 1000L);
+
+            time.sleep(500L);
+            assertGaugeValue(metrics, sampleAge, 1500L);
+
+            // At least one resolved lookup counts as a successful cycle.
+            coordinatorMetrics.updateGroupLag(Map.of(
+                "a", lag(tp0, Group.GroupType.CONSUMER, 0L, 0L, 0),
+                "b", lag(tp0, Group.GroupType.CLASSIC, 4L, 4L, 1)
+            ), time.milliseconds());
+            assertGaugeValue(metrics, sampleAge, 0L);
+
+            // A cycle with nothing to look up is successful too.
+            time.sleep(200L);
+            coordinatorMetrics.updateGroupLag(Map.of(), time.milliseconds());
+            assertGaugeValue(metrics, sampleAge, 0L);
+        } finally {
+            registry.shutdown();
+        }
+    }
+
+    @Test
     public void testGroupLagGaugesCap() {
         MetricsRegistry registry = new MetricsRegistry();
         MockTime time = new MockTime();

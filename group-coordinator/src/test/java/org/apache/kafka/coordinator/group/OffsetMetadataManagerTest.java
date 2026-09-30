@@ -3837,6 +3837,61 @@ public class OffsetMetadataManagerTest {
     }
 
     @Test
+    public void testCommittedOffsetsSnapshotSkipsOffsetsOfRecreatedTopic() {
+        Uuid oldFooTopicId = Uuid.randomUuid();
+        Uuid newFooTopicId = Uuid.randomUuid();
+        Uuid barTopicId = Uuid.randomUuid();
+        TopicPartition foo0 = new TopicPartition("foo", 0);
+        TopicPartition foo1 = new TopicPartition("foo", 1);
+        TopicPartition bar0 = new TopicPartition("bar", 0);
+
+        OffsetMetadataManagerTestContext context = new OffsetMetadataManagerTestContext.Builder()
+            .withMetadataImage(new KRaftCoordinatorMetadataImage(new MetadataImageBuilder()
+                .addTopic(oldFooTopicId, "foo", 3)
+                .build()))
+            .build();
+        long now = context.time.milliseconds();
+
+        // Committed against the current foo.
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "group", oldFooTopicId, "foo", 0, 5000L, 1, now);
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "stale-group", oldFooTopicId, "foo", 0, 7000L, 1, now);
+        // Committed without a topic id: it cannot be checked and is always kept.
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "group", Uuid.ZERO_UUID, "foo", 1, 120L, 1, now);
+        // Topic missing from the metadata image: it cannot be checked and is kept.
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "group", barTopicId, "bar", 0, 200L, 1, now);
+
+        assertEquals(
+            Map.of(
+                "group", Map.of(foo0, 5000L, foo1, 120L, bar0, 200L),
+                "stale-group", Map.of(foo0, 7000L)
+            ),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+
+        // foo is deleted and recreated, and the offset cleanup was missed.
+        CoordinatorMetadataImage recreatedImage = new KRaftCoordinatorMetadataImage(new MetadataImageBuilder()
+            .addTopic(newFooTopicId, "foo", 3)
+            .build());
+        context.offsetMetadataManager.onMetadataUpdate(recreatedImage.emptyDelta(), recreatedImage);
+
+        // Offsets of the previous foo are skipped, and a group left without any offset is dropped.
+        assertEquals(
+            Map.of("group", Map.of(foo1, 120L, bar0, 200L)),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+
+        // A commit against the recreated foo is visible again.
+        context.commitOffset(RecordBatch.NO_PRODUCER_ID, "stale-group", newFooTopicId, "foo", 0, 10L, 1, now);
+        assertEquals(
+            Map.of(
+                "group", Map.of(foo1, 120L, bar0, 200L),
+                "stale-group", Map.of(foo0, 10L)
+            ),
+            context.offsetMetadataManager.committedOffsetsSnapshot(Long.MAX_VALUE)
+        );
+    }
+
+    @Test
     public void testCommittedOffsetsSnapshotAfterTopicsDeleted() {
         OffsetMetadataManagerTestContext context = new OffsetMetadataManagerTestContext.Builder().build();
 

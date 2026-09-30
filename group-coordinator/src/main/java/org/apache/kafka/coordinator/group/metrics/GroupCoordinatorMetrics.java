@@ -42,6 +42,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -518,7 +519,7 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
     /**
      * Updates the group lag gauges with the result of a sampling cycle.
      *
-     * Groups absent from {@code lagByGroup} are removed. Groups present but with no
+     * Groups absent from {@code sampledLag} are removed. Groups present but with no
      * sampled partition keep their previous value, if any, so that a transient
      * ListOffsets failure does not zero the gauges.
      *
@@ -527,23 +528,30 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
      * the previous cycle's values, so the sample age keeps growing to show that they
      * are stale.
      *
+     * Values computed from a coordinator shard that was unloaded, or unloaded and loaded
+     * again, since the cycle read it are discarded, so that a cycle still waiting for
+     * ListOffsets does not bring back the gauges that {@link #deactivateMetricsShard}
+     * removed.
+     *
      * @param sampledLag    The lag of every sampled group keyed by group id.
      * @param sampleTimeMs  The time at which the cycle completed.
      */
     public void updateGroupLag(Map<String, GroupLagValue> sampledLag, long sampleTimeMs) {
         synchronized (lagLock) {
+            final Map<String, GroupLagValue> activeLag = discardInactiveShards(sampledLag);
+
             // Drop the groups that are gone.
             Iterator<Map.Entry<String, GroupLagEntry>> iterator = lagByGroup.entrySet().iterator();
             while (iterator.hasNext()) {
                 Map.Entry<String, GroupLagEntry> entry = iterator.next();
-                if (!sampledLag.containsKey(entry.getKey())) {
+                if (!activeLag.containsKey(entry.getKey())) {
                     unregisterGroupLagGauges(entry.getValue());
                     iterator.remove();
                 }
             }
 
             // Upsert the sampled groups.
-            sampledLag.forEach((groupId, value) -> {
+            activeLag.forEach((groupId, value) -> {
                 GroupLagEntry entry = lagByGroup.get(groupId);
                 if (value.sampledPartitions() == 0) {
                     // Keep the previous value, if any.
@@ -567,10 +575,33 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
             registerGroupLagGaugesUpToCap();
             groupLagMax = computeGroupLagMax();
 
-            if (isSuccessfulSample(sampledLag)) {
+            if (isSuccessfulSample(activeLag)) {
                 lastLagSampleTimeMs = sampleTimeMs;
             }
         }
+    }
+
+    /**
+     * Keeps only the values computed from a metrics shard that is still the active one of
+     * its partition. Each load of a partition creates a new metrics shard, so a value from
+     * an unloaded or reloaded shard carries an instance that is no longer in {@link #shards}.
+     *
+     * Must be called while holding {@link #lagLock}. {@link #deactivateMetricsShard} removes
+     * the shard from {@link #shards} before it takes the lock to remove the shard's gauges,
+     * so either this check sees the shard gone, or the removal runs after this update.
+     */
+    private Map<String, GroupLagValue> discardInactiveShards(Map<String, GroupLagValue> sampledLag) {
+        Map<String, GroupLagValue> active = new HashMap<>(sampledLag.size());
+        sampledLag.forEach((groupId, value) -> {
+            if (shards.get(value.shard().topicPartition()) == value.shard()) {
+                active.put(groupId, value);
+            }
+        });
+        if (active.size() < sampledLag.size()) {
+            LOG.debug("Discarded the lag of {} groups hosted by coordinator shards that were unloaded " +
+                "or reloaded during the sampling cycle.", sampledLag.size() - active.size());
+        }
+        return active;
     }
 
     /**
@@ -626,7 +657,7 @@ public class GroupCoordinatorMetrics extends CoordinatorMetrics implements AutoC
             Iterator<Map.Entry<String, GroupLagEntry>> iterator = lagByGroup.entrySet().iterator();
             while (iterator.hasNext()) {
                 GroupLagEntry entry = iterator.next().getValue();
-                if (Objects.equals(shard, entry.value.shard())) {
+                if (shard.equals(entry.value.shard().topicPartition())) {
                     unregisterGroupLagGauges(entry);
                     iterator.remove();
                     removed = true;

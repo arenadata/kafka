@@ -17,6 +17,7 @@
 package org.apache.kafka.coordinator.group.metrics;
 
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.coordinator.common.runtime.CoordinatorMetricsShard;
 import org.apache.kafka.coordinator.group.Group;
 
 import java.util.Map;
@@ -27,12 +28,13 @@ import java.util.Objects;
  * group coordinator shard, as read from the coordinator state at a given
  * committed offset.
  *
- * @param shard  The __consumer_offsets partition the inputs were read from. May be null
- *               when the shard is not associated with a metrics shard.
+ * @param shard  The metrics shard of the coordinator shard the inputs were read from.
+ *               Every load of a __consumer_offsets partition gets a new metrics shard, so
+ *               it also identifies that load. Null only for {@link #EMPTY}.
  * @param groups The lag inputs keyed by group id.
  */
 public record GroupLagInputs(
-    TopicPartition shard,
+    CoordinatorMetricsShard shard,
     Map<String, GroupLagInput> groups
 ) {
     public static final GroupLagInputs EMPTY = new GroupLagInputs(null, Map.of());

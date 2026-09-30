@@ -123,6 +123,7 @@ import static org.apache.kafka.coordinator.group.GroupCoordinatorShard.GROUP_SIZ
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -157,13 +158,11 @@ public class GroupCoordinatorShardTest {
             metricsShard
         );
 
-        TopicPartition shardTp = new TopicPartition("__consumer_offsets", 3);
         TopicPartition foo0 = new TopicPartition("foo", 0);
         TopicPartition foo1 = new TopicPartition("foo", 1);
         TopicPartition bar0 = new TopicPartition("bar", 0);
         long committedOffset = 100L;
 
-        when(metricsShard.topicPartition()).thenReturn(shardTp);
         when(offsetMetadataManager.committedOffsetsSnapshot(committedOffset)).thenReturn(Map.of(
             "consumer-group", Map.of(foo0, 10L, foo1, 20L),
             "classic-group", Map.of(bar0, 30L),
@@ -189,7 +188,7 @@ public class GroupCoordinatorShardTest {
 
         GroupLagInputs inputs = coordinator.collectGroupLagInputs(committedOffset);
 
-        assertEquals(shardTp, inputs.shard());
+        assertSame(metricsShard, inputs.shard());
         assertEquals(
             Map.of(
                 "consumer-group", new GroupLagInputs.GroupLagInput(Group.GroupType.CONSUMER, Map.of(foo0, 10L, foo1, 20L)),

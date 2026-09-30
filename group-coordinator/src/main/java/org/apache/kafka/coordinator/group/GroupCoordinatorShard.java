@@ -959,7 +959,7 @@ public class GroupCoordinatorShard implements CoordinatorShard<CoordinatorRecord
             groups.put(groupId, new GroupLagInputs.GroupLagInput(group.type(), committedOffsets));
         });
 
-        return new GroupLagInputs(metricsShard.topicPartition(), groups);
+        return new GroupLagInputs(metricsShard, groups);
     }
 
     /**

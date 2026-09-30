@@ -21,14 +21,17 @@ import org.apache.kafka.common.errors.CoordinatorLoadInProgressException;
 import org.apache.kafka.common.errors.NotCoordinatorException;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.utils.LogContext;
+import org.apache.kafka.coordinator.common.runtime.CoordinatorMetricsShard;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRecord;
 import org.apache.kafka.coordinator.common.runtime.CoordinatorRuntime;
 import org.apache.kafka.coordinator.group.metrics.GroupCoordinatorMetrics;
+import org.apache.kafka.coordinator.group.metrics.GroupCoordinatorMetricsShard;
 import org.apache.kafka.coordinator.group.metrics.GroupLagInputs;
 import org.apache.kafka.coordinator.group.metrics.GroupLagValue;
 import org.apache.kafka.server.util.MockTime;
 import org.apache.kafka.server.util.PartitionMetadataClient;
 import org.apache.kafka.server.util.timer.MockTimer;
+import org.apache.kafka.timeline.SnapshotRegistry;
 
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -52,8 +55,8 @@ import static org.mockito.Mockito.when;
 
 public class GroupLagSamplerTest {
 
-    private static final TopicPartition SHARD_0 = new TopicPartition("__consumer_offsets", 0);
-    private static final TopicPartition SHARD_1 = new TopicPartition("__consumer_offsets", 1);
+    private static final CoordinatorMetricsShard SHARD_0 = mock(CoordinatorMetricsShard.class);
+    private static final CoordinatorMetricsShard SHARD_1 = mock(CoordinatorMetricsShard.class);
     private static final TopicPartition FOO_0 = new TopicPartition("foo", 0);
     private static final TopicPartition FOO_1 = new TopicPartition("foo", 1);
     private static final TopicPartition BAR_0 = new TopicPartition("bar", 0);
@@ -222,6 +225,69 @@ public class GroupLagSamplerTest {
         ));
         sampler.sample().join();
         verify(metrics, times(1)).updateGroupLag(eq(Map.of()), anyLong());
+    }
+
+    @Test
+    public void testShardUnloadedOrReloadedWhileListOffsetsPendingDoesNotRestoreGauges() {
+        CoordinatorRuntime<GroupCoordinatorShard, CoordinatorRecord> runtime = mockRuntime();
+        PartitionMetadataClient client = mock(PartitionMetadataClient.class);
+        GroupCoordinatorMetrics metrics = new GroupCoordinatorMetrics();
+        MockTime time = new MockTime();
+        GroupLagSampler sampler = sampler(runtime, client, metrics, time, new MockTimer(time));
+        TopicPartition shardTp = new TopicPartition("__consumer_offsets", 0);
+        Map<String, GroupLagInputs.GroupLagInput> groups = Map.of(
+            "grp-0", new GroupLagInputs.GroupLagInput(Group.GroupType.CONSUMER, Map.of(FOO_0, 10L))
+        );
+
+        try {
+            GroupCoordinatorMetricsShard shard = metrics.newMetricsShard(new SnapshotRegistry(new LogContext()), shardTp);
+            metrics.activateMetricsShard(shard);
+            when(runtime.scheduleReadAllOperation(eq(GroupLagSampler.SAMPLE_OPERATION_NAME), any())).thenReturn(List.of(
+                CompletableFuture.completedFuture(new GroupLagInputs(shard, groups))
+            ));
+
+            // A first cycle publishes the lag of grp-0.
+            when(client.listLatestOffsets(Set.of(FOO_0))).thenReturn(Map.of(FOO_0, offset(15L)));
+            sampler.sample().join();
+            assertEquals(1, metrics.registeredLagGroups());
+
+            // The shard is unloaded and loaded again while the next cycle waits for ListOffsets.
+            CompletableFuture<PartitionMetadataClient.OffsetResponse> pending = new CompletableFuture<>();
+            when(client.listLatestOffsets(Set.of(FOO_0))).thenReturn(Map.of(FOO_0, pending));
+            CompletableFuture<Void> cycle = sampler.sample();
+            metrics.deactivateMetricsShard(shard);
+            assertEquals(0, metrics.registeredLagGroups());
+            GroupCoordinatorMetricsShard reloadedShard = metrics.newMetricsShard(new SnapshotRegistry(new LogContext()), shardTp);
+            metrics.activateMetricsShard(reloadedShard);
+
+            // The result read from the previous load is discarded.
+            pending.complete(new PartitionMetadataClient.OffsetResponse(20L, Errors.NONE));
+            cycle.join();
+            assertEquals(0, metrics.registeredLagGroups());
+
+            // A cycle that reads the new load publishes the lag again.
+            when(runtime.scheduleReadAllOperation(eq(GroupLagSampler.SAMPLE_OPERATION_NAME), any())).thenReturn(List.of(
+                CompletableFuture.completedFuture(new GroupLagInputs(reloadedShard, groups))
+            ));
+            when(client.listLatestOffsets(Set.of(FOO_0))).thenReturn(Map.of(FOO_0, offset(18L)));
+            sampler.sample().join();
+            assertEquals(1, metrics.registeredLagGroups());
+
+            // The shard is unloaded while the next cycle waits for ListOffsets.
+            pending = new CompletableFuture<>();
+            when(client.listLatestOffsets(Set.of(FOO_0))).thenReturn(Map.of(FOO_0, pending));
+            cycle = sampler.sample();
+            metrics.deactivateMetricsShard(reloadedShard);
+            assertEquals(0, metrics.registeredLagGroups());
+
+            // The late result does not bring the gauges back.
+            pending.complete(new PartitionMetadataClient.OffsetResponse(30L, Errors.NONE));
+            cycle.join();
+            assertEquals(0, metrics.registeredLagGroups());
+            assertFalse(sampler.inFlight());
+        } finally {
+            metrics.close();
+        }
     }
 
     @Test

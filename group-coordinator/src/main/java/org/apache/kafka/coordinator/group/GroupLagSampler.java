@@ -62,6 +62,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * The next cycle is scheduled only once the previous one completed, so cycles
  * never overlap. Nothing blocks the timer thread: the whole chain is
  * {@link CompletableFuture} based.
+ *
+ * A shard can be unloaded or reloaded while the cycle waits for ListOffsets. Each
+ * result carries the metrics shard it was read from, and
+ * {@link GroupCoordinatorMetrics#updateGroupLag} discards the results whose metrics
+ * shard is no longer active.
  */
 public class GroupLagSampler implements AutoCloseable {
 

@@ -16,7 +16,7 @@
  */
 package org.apache.kafka.coordinator.group.metrics;
 
-import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.coordinator.common.runtime.CoordinatorMetricsShard;
 import org.apache.kafka.coordinator.group.Group;
 
 import java.util.Objects;
@@ -24,7 +24,9 @@ import java.util.Objects;
 /**
  * The lag of a single group as computed by one sampling cycle.
  *
- * @param shard             The __consumer_offsets partition hosting the group. May be null.
+ * @param shard             The metrics shard of the coordinator shard hosting the group. It
+ *                          identifies the load of the __consumer_offsets partition the value
+ *                          was computed from.
  * @param type              The group type.
  * @param sumLag            The sum of the lag of all sampled partitions.
  * @param maxLag            The maximum lag across all sampled partitions.
@@ -33,7 +35,7 @@ import java.util.Objects;
  * @param totalPartitions   The number of partitions with a committed offset.
  */
 public record GroupLagValue(
-    TopicPartition shard,
+    CoordinatorMetricsShard shard,
     Group.GroupType type,
     long sumLag,
     long maxLag,
@@ -41,6 +43,7 @@ public record GroupLagValue(
     int totalPartitions
 ) {
     public GroupLagValue {
+        Objects.requireNonNull(shard, "shard");
         Objects.requireNonNull(type, "type");
     }
 }

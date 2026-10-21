@@ -269,10 +269,12 @@ fi
 
 # Which java to use
 if [ -z "$JAVA_HOME" ]; then
-  JAVA="java"
-else
-  JAVA="$JAVA_HOME/bin/java"
+  if ! java_home_cmd=$(/usr/lib/ad-runtime-utils/bin/ad-runtime-utils -runtime java -config /etc/ad-runtime-utils/ads.yaml -service KAFKA); then
+    java_home_cmd=$(/usr/lib/ad-runtime-utils/bin/ad-runtime-utils -runtime java -config /etc/ad-runtime-utils/ads.yaml -service KAFKA_CONTROLLER)
+  fi
+  eval "$java_home_cmd"
 fi
+JAVA="$JAVA_HOME/bin/java"
 
 # Memory options
 if [ -z "$KAFKA_HEAP_OPTS" ]; then
